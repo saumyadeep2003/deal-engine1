@@ -58,6 +58,7 @@ def main() -> None:
     summary = bake("/api/summary", "summary.json")
     pipeline = bake("/api/pipeline", "pipeline.json")
     (api / "runs").mkdir(exist_ok=True)
+    bake("/api/run/plan", "run-plan.json")
     runs = bake("/api/runs", "runs.json")
     for r in (runs or {}).get("runs", [])[:10]:
         bake(f"/api/runs/{r['id']}", f"runs/{r['id']}.json")
@@ -147,6 +148,7 @@ window.STATIC_CAPTURED = {json.dumps(captured + " UTC")};
         thesis: params.get("thesis_text"),
         results: d[params.get("thesis_text")] || [] }}));
     if (path === "/api/run/current") return J({{ running: false, run: null }});
+    if (path === "/api/run/plan") return real("api/run-plan.json");
     if (path === "/api/runs") return real("api/runs.json");
     const mr = path.match(/^\\/api\\/runs\\/(\\d+)$/);
     if (mr) return real(`api/runs/${{mr[1]}}.json`);

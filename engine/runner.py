@@ -38,6 +38,26 @@ def _free_sources() -> list[dict]:
     return [s for s in sources_config()["sources"] if not s.get("requires_license")]
 
 
+def plan(kind: str = "full") -> dict:
+    """What a search WILL do, before anyone presses the button. Same step list the
+    live panel renders, plus per-step estimates from previous runs — so the sources
+    the engine checks are visible at all times, not only mid-search."""
+    est = step_estimates()
+    steps = [{"key": k, "label": lbl, "seconds_estimate": round(est[k], 1) if k in est else None,
+              "is_source": k.startswith("collect:")} for k, lbl in build_steps(kind)]
+    # a measured 0.0s step is real data, not a missing estimate — `or 20` would
+    # silently inflate the total by 20s for every fast step
+    known = [s["seconds_estimate"] for s in steps if s["seconds_estimate"] is not None]
+    total = sum(s["seconds_estimate"] if s["seconds_estimate"] is not None else 20.0
+                for s in steps)
+    return {"steps": steps, "source_count": sum(1 for s in steps if s["is_source"]),
+            "total_seconds_estimate": round(total),
+            "basis": "estimated from your previous searches" if known
+                     else "rough estimate — no searches run yet",
+            "licensed_sources": [s["name"] for s in sources_config()["sources"]
+                                 if s.get("requires_license")]}
+
+
 def build_steps(kind: str) -> list[tuple[str, str]]:
     steps = [(f"collect:{s['name']}", SOURCE_LABELS.get(s["name"], f"Reading {s['name']}"))
              for s in _free_sources()]

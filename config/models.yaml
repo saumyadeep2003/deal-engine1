@@ -10,11 +10,15 @@ provider:
 # cheaper small model you trust, point `classify` at it and the funnel economics
 # improve without touching code. (Former z.ai config: base_url
 # https://api.z.ai/api/openai/v1, key ZAI_API_KEY, tiers glm-4-flash/air/plus.)
+# `classify` and `chat` are quick, high-volume, low-judgment calls: a reasoning
+# model spends 15-30s thinking about a question a small instruct model answers in
+# about a second. `score` and `brief` are where the reasoning is worth paying for.
+# Swap any line to change model routing — no code touches a model name.
 tiers:
-  classify: "thinkingmachines/inkling"
+  classify: "meta/llama-3.1-8b-instruct"
   score: "thinkingmachines/inkling"
   brief: "thinkingmachines/inkling"
-  chat: "thinkingmachines/inkling"
+  chat: "meta/llama-3.1-8b-instruct"
 
 generation:
   temperature: 1.0

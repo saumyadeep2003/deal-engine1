@@ -222,6 +222,7 @@ details.explain p { color:var(--ink-2); font-size:12.5px; margin:6px 0 0; }
     <div class="actions">
       <button id="btnRefresh" class="primary">🔍 Search for new deals</button>
       <button id="btnDigest">✉️ Email me the summary</button>
+      <button id="btnLlmTest">🤖 Test AI connection</button>
       <a id="dlWorkbook" href="/api/workbook" download><button>⬇ Download Excel</button></a>
     </div>
   </div>
@@ -235,6 +236,18 @@ details.explain p { color:var(--ink-2); font-size:12.5px; margin:6px 0 0; }
     </div>
     <div id="stepList" style="display:grid; grid-template-columns:repeat(auto-fill,
          minmax(300px,1fr)); gap:3px 18px; font-size:12.5px"></div>
+  </div>
+  <!-- what a search checks — always visible, so the sources are never a mystery -->
+  <div id="planPanel" style="border-top:1px solid var(--border); margin-top:12px;
+       padding-top:10px">
+    <div style="display:flex; gap:10px; align-items:baseline; flex-wrap:wrap">
+      <b style="font-size:13px">Where this search looks</b>
+      <span id="planSummary" class="ssub" style="color:var(--ink-2)"></span>
+      <button id="planToggle" class="ghost" style="font-size:12px; padding:2px 8px">show all
+        steps</button>
+    </div>
+    <div id="planList" hidden style="display:grid; grid-template-columns:repeat(auto-fill,
+         minmax(300px,1fr)); gap:3px 18px; font-size:12.5px; margin-top:8px"></div>
   </div>
 </div>
 
@@ -893,10 +906,13 @@ function drawSources(sources) {
   };
   mount2("#srcTable", tableFrom(
     [{ label: "Source" }, { label: "Status" }, { label: "Items", num: true },
-     { label: "Last check" }, { label: "Access" }],
+     { label: "Last check" }, { label: "Access" }, { label: "What it would add" }],
     sources.map(s => [s.name.replaceAll("_", " "), { node: statusChip(s) }, s.signals,
       (s.last_ok_at || "").slice(0, 16).replace("T", " ") || "—",
-      s.requires_license ? `paid (${s.license_vendor})` : "free"])),
+      s.requires_license
+        ? `paid — ${s.license_vendor}${s.env_key ? " · set " + s.env_key : ""}`
+        : "free — already on",
+      s.unlocks || (s.requires_license ? "—" : "in use now")])),
     "No sources registered.");
 }
 
@@ -1052,6 +1068,24 @@ $("#btnRefresh").onclick = async () => {
   setTimeout(loadAll, 1200);   // renderStatus shows the step panel + re-enables at the end
 };
 
+$("#btnLlmTest").onclick = async () => {
+  const b = $("#btnLlmTest"); b.disabled = true; b.textContent = "Testing…";
+  let d = {};
+  try { d = await (await fetch("/api/llm/test", { method: "POST" })).json(); }
+  catch (e) { d = { ok: false, reason: "the engine did not respond" }; }
+  if (d.ok) {
+    b.textContent = "AI working ✔";
+    toast(`AI connection works — ${d.model} replied in ${d.seconds}s. New searches will `
+      + "include the written analysis.");
+  } else {
+    b.textContent = "AI not working ✕";
+    toast("AI is not working: " + (d.reason || "unknown") +
+      (d.provider_message ? " — provider said: " + d.provider_message : ""));
+  }
+  setTimeout(() => { b.disabled = false; b.textContent = "🤖 Test AI connection";
+    loadAll(); }, 9000);
+};
+
 $("#btnStop").onclick = async () => {
   const b = $("#btnStop"); b.disabled = true; b.textContent = "Stopping…";
   const r = await fetch("/api/run/cancel", { method: "POST" });
@@ -1140,12 +1174,40 @@ function renderSteps(run) {
     : "Finishing up…";
 }
 
+let _planCache = null;
+async function loadPlan() {
+  try { _planCache = _planCache || await (await fetch("/api/run/plan")).json(); }
+  catch (e) { return; }
+  const p = _planCache; if (!p || !p.steps) return;
+  $("#planSummary").textContent = `${p.source_count} public sources, `
+    + `${p.steps.length} steps in total — takes ${fmtMins(p.total_seconds_estimate)} `
+    + `(${p.basis}). ${p.licensed_sources.length} more sources need paid licences and are `
+    + `switched off.`;
+  const list = $("#planList"); list.textContent = "";
+  p.steps.forEach((st, i) => {
+    const row = el("div", { attrs: { style: "display:flex; gap:7px; align-items:baseline" } });
+    row.appendChild(el("span", { cls: "muted", text: (i + 1) + "." }));
+    const lbl = el("span", { text: st.label });
+    if (st.is_source) lbl.style.fontWeight = "600";
+    row.appendChild(lbl);
+    if (st.seconds_estimate >= 1) row.appendChild(el("span", { cls: "muted",
+      text: ` — usually ${Math.round(st.seconds_estimate)}s` }));   // "0s" reads as broken
+    list.appendChild(row);
+  });
+}
+$("#planToggle").onclick = () => {
+  const l = $("#planList"), open = l.hidden;
+  l.hidden = !open;
+  $("#planToggle").textContent = open ? "hide steps" : "show all steps";
+};
+
 async function pollRun() {
   if (window.STATIC_DEMO) return;
   let cur = null;
   try { cur = await (await fetch("/api/run/current")).json(); } catch (e) { cur = null; }
   const running = !!(cur && cur.running);
   $("#stepPanel").hidden = !running;
+  $("#planPanel").hidden = running;      // the live checklist replaces the preview
   if (running) {
     renderSteps(cur.run);
     clearTimeout(window._runPoll);
@@ -1267,6 +1329,7 @@ async function loadAll() {
   }
   $("#hdrSub") && ($("#hdrSub").textContent = "");
   renderStatus(s);
+  loadPlan();
 
   // plain-language posture notes — never let a limitation be invisible
   const warn = $("#postureWarn"); warn.textContent = "";
@@ -1274,6 +1337,11 @@ async function loadAll() {
   if (s.llm.stubbed) notes.push("AI-written analysis is switched off (no AI key is set up), "
     + "so those fields show a clear placeholder instead of made-up text. All numbers, "
     + "rankings and sources still work.");
+  else if (s.llm.last_error) notes.push("The AI key is set, but the last request to the AI "
+    + "provider failed, so those fields show a placeholder instead of made-up text: "
+    + (s.llm.last_error.hint || "") + " (provider said: "
+    + String(s.llm.last_error.message || "").slice(0, 140) + "). Press “Test AI connection” "
+    + "to check again.");
   if (!s.email.configured || !(s.email.to || []).length)
     notes.push("Email summaries aren't being delivered yet (" + (s.email.reason ||
       "no recipient set") + ") — they're saved as files instead.");

@@ -217,3 +217,42 @@ Chronological log of judgment calls made while building. Part of the deliverable
     keeps everything already collected, and records the run as `cancelled`, not `failed`.
     Unfinished steps show "not run — search was stopped". `_clear_stale_running()` also
     means a crashed worker can never leave a phantom run blocking the button.
+37. **"Where this search looks" is now permanent, not only mid-run.** The live step
+    checklist only existed while a search was running, so at rest the dashboard never
+    answered the obvious question — what does this thing actually check? `/api/run/plan`
+    returns the same step list with per-step medians from previous runs; the panel shows
+    "8 public sources, 21 steps, takes about N — 10 more need paid licences and are
+    switched off" with the full list one click away, and is replaced by the live checklist
+    while a search runs. (A measured 0.0s step is real data, so the total must not treat it
+    as a missing estimate and substitute 20s — that bug inflated the first estimate from
+    36s to 276s.)
+38. **The AI step was 50 model calls per search; it is now 10 or fewer.** Two calls per
+    company (screen, then judge) × 25 companies, each on a reasoning model at 15-30s, plus
+    2s pacing = 15-20 minutes while everything else took about a minute. Four changes:
+    screening and judgment merged into ONE structured response (the screening question is
+    answered from the same context, so asking twice bought only latency); `JUDGE_TOP_N`
+    defaults to 10, since only the top few by computed composite ever become Deep Dive
+    candidates and everything below still gets full deterministic ranking; the `classify`
+    and `chat` tiers point at a small instruct model rather than a reasoning one; and a
+    judgment is reused when the company's evidence fingerprint (signal count + newest
+    signal id) has not moved since it was made. Measured with a stubbed provider: 10 calls
+    cold, 0 on an unchanged re-run, exactly 1 when one company gained a signal.
+39. **A tier naming a model the provider does not serve now falls back to the known-good
+    model** instead of stubbing the run — config is partner-editable, so a typo there must
+    not look like an outage.
+40. **The stub marker states the real cause.** `[STUB: no API key …]` printed even when a
+    key was set and the provider had merely timed out, which sends the reader hunting for
+    the wrong problem. Now: no key, provider-did-not-answer, and provider-failing-repeatedly
+    are three distinct messages.
+41. **Source Health tells you how to switch a source on**: each licence-gated row shows the
+    exact environment variable and what connecting it would add (CONNECTORS.md carries the
+    honest availability picture — which vendors are self-serve, which are enterprise sales,
+    and which have no public API at all).
+42. **"128 calls, 128 stubbed" with no reason was the real bug.** The key was set and every
+    call was failing, and the only way to learn why was to read the host's logs. `llm` now
+    keeps the provider's own last error and classifies it into a cause a partner can act on
+    — key rejected, model not served for this key, out of credits/rate-limited, answered too
+    slowly, or could not be reached at all — surfaced through `/api/summary` and stated in
+    the dashboard's posture banner. `POST /api/llm/test` (the "Test AI connection" button)
+    makes one real call and reports the same verdict on demand, so diagnosis takes a click
+    rather than a log hunt. Classification verified against all five error shapes.

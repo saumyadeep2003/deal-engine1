@@ -18,6 +18,15 @@ from . import db
 from .config import models_config
 
 STUB_TEXT = "[STUB: no API key — judgment unavailable]"
+# The stub must state the REAL reason. A brief that says "no API key" on a
+# deployment that has one sends the reader hunting for the wrong problem.
+STUB_PROVIDER_DOWN = "[STUB: AI provider did not answer in time — judgment unavailable]"
+STUB_CIRCUIT = ("[STUB: AI provider failing repeatedly — judgment skipped for the rest "
+                "of this search]")
+
+
+def is_stub(text: str | None) -> bool:
+    return bool(text) and str(text).startswith("[STUB")
 
 
 def api_key_env_name() -> str:
@@ -69,6 +78,44 @@ def circuit_open() -> bool:
 
 def circuit_reset() -> None:
     _FAILS[0] = 0
+    _LAST_ERROR.clear()
+
+
+# ---- the provider's own words, kept where a partner can read them -----------
+# "128 calls, 128 stubbed" without a reason forces whoever is on call to go
+# reading host logs. The last failure is surfaced through /api/summary instead.
+_LAST_ERROR: dict = {}
+
+
+def last_error() -> dict | None:
+    return dict(_LAST_ERROR) or None
+
+
+def _record_error(stage: str, model: str, exc: Exception) -> None:
+    msg = str(exc).strip()
+    low = msg.lower()
+    kind = type(exc).__name__
+    if kind == "APITimeoutError" or "timeout" in low or "timed out" in low:
+        hint = ("the provider accepted the request but did not answer within "
+                f"{models_config()['limits']['request_timeout_seconds']}s — usually a slow "
+                "or overloaded model. Try a smaller model in config/models.yaml.")
+    elif kind == "APIConnectionError" or "connection error" in low:
+        hint = ("could not reach the provider at all — DNS, blocked outbound network, or a "
+                f"wrong base_url ({models_config()['provider']['base_url']}). Note the key "
+                "is never checked when the connection itself fails.")
+    elif "401" in msg or "unauthor" in low or "invalid api key" in low or "forbidden" in low:
+        hint = ("the API key was rejected — it is missing, mistyped, expired or rotated. "
+                "Check NVIDIA_API_KEY in the host's environment settings.")
+    elif "404" in msg or "not found" in low or "unknown model" in low:
+        hint = (f"the provider does not serve '{model}' for this key — change the model in "
+                "config/models.yaml or enable it on your provider account.")
+    elif "429" in msg or "quota" in low or "rate" in low or "credit" in low:
+        hint = ("the account is out of quota/credits or is being rate-limited — check the "
+                "provider dashboard for remaining credits.")
+    else:
+        hint = "unexpected provider error — the exact message is above."
+    _LAST_ERROR.update({"stage": stage, "model": model, "type": type(exc).__name__,
+                        "message": msg[:300], "hint": hint, "at": db.now_iso()})
 
 
 # ---- pacing: free-tier providers throttle per-minute. Space calls out rather
@@ -104,7 +151,7 @@ def complete(stage: str, system: str, user: str, tier: str | None = None) -> str
         return STUB_TEXT
     if circuit_open():
         _log(stage, model, 0, 0, stub=True)
-        return STUB_TEXT
+        return STUB_CIRCUIT
     gen = models_config().get("generation", {})
     # Per-stage ceilings: judging needs a short verdict, not an essay. Asking a
     # reasoning model for 8192 tokens makes it think for minutes per company.
@@ -124,6 +171,16 @@ def complete(stage: str, system: str, user: str, tier: str | None = None) -> str
             break
         except Exception as exc:  # noqa: BLE001 — provider outage must not kill a job
             msg = str(exc)
+            # A tier pointed at a model this provider doesn't serve should degrade to
+            # the model we know works, not stub the whole run. Config is editable by
+            # partners; a typo there must not look like an outage.
+            fallback = models_config()["tiers"].get("score")
+            if (("model" in msg.lower() and ("not found" in msg.lower() or "404" in msg))
+                    or "unknown model" in msg.lower()) and model != fallback and fallback:
+                print(f"  ~ model '{model}' unavailable for stage={stage} — falling back"
+                      f" to '{fallback}'")
+                model = fallback
+                continue
             rate_limited = "429" in msg or "rate" in msg.lower() or "quota" in msg.lower()
             if rate_limited and attempt < 3:
                 wait = (8, 20, 45)[attempt]
@@ -132,18 +189,40 @@ def complete(stage: str, system: str, user: str, tier: str | None = None) -> str
                 _sleep(wait)
                 continue
             _FAILS[0] += 1
+            _record_error(stage, model, exc)
             print(f"  ! LLM call failed ({model}, stage={stage}): {type(exc).__name__}:"
                   f" {msg[:120]} — falling back to loud [STUB]"
                   + (f" [circuit open after {_FAILS[0]} failures — remaining AI fields "
                      "in this run will be stubbed rather than waited on]"
                      if circuit_open() else ""))
             _log(stage, model, 0, 0, stub=True)
-            return STUB_TEXT
+            return STUB_PROVIDER_DOWN     # a key IS set — say what actually happened
     circuit_reset()
     usage = resp.usage
     _log(stage, model, usage.prompt_tokens if usage else 0,
          usage.completion_tokens if usage else 0, stub=False)
     return resp.choices[0].message.content or ""
+
+
+def self_test() -> dict:
+    """One tiny real call, so 'why is everything stubbed?' is answerable from the
+    dashboard instead of the host's logs. Never raises."""
+    key_env = api_key_env_name()
+    if stubbed():
+        return {"ok": False, "reason": f"{key_env} is not set in this environment",
+                "key_env": key_env, "key_present": False}
+    model = models_config()["tiers"]["score"]
+    circuit_reset()                      # a test should try, not inherit a tripped circuit
+    t0 = _t.time()
+    out = complete("selftest", "You are a connection test.", "Reply with the word OK.")
+    took = round(_t.time() - t0, 1)
+    if is_stub(out):
+        err = last_error() or {}
+        return {"ok": False, "key_env": key_env, "key_present": True, "model": model,
+                "seconds": took, "reason": err.get("hint", "the call did not succeed"),
+                "provider_message": err.get("message"), "error_type": err.get("type")}
+    return {"ok": True, "key_env": key_env, "key_present": True, "model": model,
+            "seconds": took, "reply": (out or "").strip()[:80]}
 
 
 def _extract_json(text: str) -> dict | list | None:
@@ -170,7 +249,7 @@ def complete_json(stage: str, system: str, user: str, schema_model, tier: str | 
         _log(stage, "stub", 0, 0, stub=True)
         return None
     raw = complete(stage, sys_full, user, tier=tier)
-    if raw == STUB_TEXT:      # provider unreachable — honest null, no review spam
+    if is_stub(raw):          # provider unreachable — honest null, no review spam
         return None
     for attempt in range(2):
         data = _extract_json(raw)

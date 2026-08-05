@@ -10,6 +10,7 @@ Bound to 127.0.0.1 by default — this is fund data on a laptop, not a public si
 """
 from __future__ import annotations
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -34,7 +35,8 @@ import time as _time
 
 _BUDGETS: dict[str, list] = {}          # name -> [window_start_epoch, count]
 _LIMITS = {"chat": (3600, 60), "scan": (3600, 120), "refresh": (3600, 6),
-           "brief": (3600, 12), "decision": (3600, 60), "digest_send": (3600, 6)}
+           "brief": (3600, 12), "decision": (3600, 60), "digest_send": (3600, 6),
+           "llm_test": (3600, 20)}
 
 
 def _within_budget(name: str) -> bool:
@@ -114,8 +116,11 @@ def summary() -> dict:
         "companies_filtered_pct": round(100 * (1 - surviving / companies), 1) if companies else 0,
         "surviving_signals": surviving_signals,
         "llm": {"stubbed": llm.stubbed(),
+                "key_env": llm.api_key_env_name(),
+                "circuit_open": llm.circuit_open(),
+                "last_error": llm.last_error(),
                 "usage": [dict(r) for r in tokens]},
-        "sources": [dict(r) for r in sources],
+        "sources": _with_connection_info([dict(r) for r in sources]),
         "email": email_send.status(),
         "sheets": gsheets.status(),
         "job": _job_compat(),
@@ -128,6 +133,34 @@ def summary() -> dict:
 def _search_mode() -> str:
     import os
     return (os.environ.get("SEARCH_MODE") or "manual").lower()
+
+
+# What each paid source would unlock, so "switched off" is never a mystery.
+UNLOCKS = {
+    "pitchbook": "full funding history, valuations, complete cap tables",
+    "crunchbase": "funding rounds and investor lists beyond SEC filings",
+    "harmonic": "company + founder graph, early-stage coverage",
+    "dealroom": "European coverage and funding data",
+    "coresignal": "headcount and 6-month hiring growth (feeds runway estimates)",
+    "x_gp_watchlist": "what tracked GPs are posting — the earliest sector signal",
+    "blind": "employee sentiment at target companies",
+    "podcasts": "investor commentary from podcast transcripts",
+    "substack_threads": "investor newsletter commentary",
+    "the_information": "scoop-level reporting on rounds and hires",
+}
+
+
+def _with_connection_info(rows: list[dict]) -> list[dict]:
+    """Attach the env var that switches each source on, and what it unlocks —
+    the dashboard should tell you how to connect a source, not just that it is off."""
+    from engine.config import sources_config
+    cfg = {s["name"]: s for s in sources_config()["sources"]}
+    for r in rows:
+        c = cfg.get(r["name"], {})
+        r["env_key"] = c.get("env_key")
+        r["env_key_set"] = bool(c.get("env_key") and os.environ.get(c["env_key"]))
+        r["unlocks"] = UNLOCKS.get(r["name"])
+    return rows
 
 
 def _job_compat() -> dict:
@@ -438,6 +471,22 @@ def refresh(full: bool = True) -> dict:
                             status_code=409)
     return {"ok": True, "started": True, "run_id": run_id,
             "note": "poll /api/run/current for live step progress"}
+
+
+@app.post("/api/llm/test")
+def llm_test() -> dict:
+    """Make one real call to the model provider and report exactly what happened —
+    key rejected, model unavailable, out of credits, or working."""
+    _budget_or_429("llm_test")
+    return llm.self_test()
+
+
+@app.get("/api/run/plan")
+def run_plan() -> dict:
+    """Every place a search looks, and roughly how long each takes — visible
+    before you press the button, not only while it runs."""
+    from engine import runner
+    return runner.plan("full")
 
 
 @app.post("/api/run/cancel")

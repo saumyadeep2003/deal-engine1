@@ -152,7 +152,10 @@ def _observed_sections(company_id: int) -> str:
 def _judgment_sections(company_id: int, judged: dict | None) -> str:
     out = ["\n## Judgment (model-generated — labelled, distinct from observed data)\n"]
     if not judged:
-        s = llm.STUB_TEXT
+        # name the actual cause: no key, provider failing, or provider timed out.
+        s = (llm.STUB_TEXT if llm.stubbed()
+             else llm.STUB_CIRCUIT if llm.circuit_open()
+             else llm.STUB_PROVIDER_DOWN)
         out += [f"- Founder quality: {s}", f"- Moat / defensibility: {s}",
                 f"- TAM: {s}", f"- Meta-thesis fit: {s}", f"- Exit horizon: {s}",
                 f"\n### Thesis narrative\n{s}"]

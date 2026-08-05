@@ -1,6 +1,6 @@
 # Static demo snapshot
 
-Deployed to Vercel as a static site. Real pipeline data captured 2026-08-05 13:48 UTC from the live engine; the engine itself runs locally (see the repository root: `./deploy/install.sh`).
+Deployed to Vercel as a static site. Real pipeline data captured 2026-08-05 16:14 UTC from the live engine; the engine itself runs locally (see the repository root: `./deploy/install.sh`).
 
 Regenerate after any pipeline run with:
 
