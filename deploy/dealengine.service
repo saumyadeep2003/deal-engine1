@@ -1,0 +1,22 @@
+# Linux equivalent of the macOS LaunchAgent, for the VPS/server path.
+#   cp deploy/dealengine.service ~/.config/systemd/user/
+#   systemctl --user daemon-reload && systemctl --user enable --now dealengine
+#   loginctl enable-linger $USER      # survive logout
+# Replace __DIR__ with the absolute repo path.
+[Unit]
+Description=Thirdbase Deal Sourcing & Discovery Engine
+After=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=__DIR__
+Environment=PYTHONUNBUFFERED=1
+ExecStart=__DIR__/.venv/bin/python __DIR__/serve.py
+Restart=always
+RestartSec=30
+StandardOutput=append:__DIR__/logs/engine.out.log
+StandardError=append:__DIR__/logs/engine.err.log
+Nice=5
+
+[Install]
+WantedBy=default.target

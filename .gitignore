@@ -1,0 +1,9 @@
+data/engine.db
+data/engine.db-*
+.venv/
+.env
+logs/*.log*
+output/
+__pycache__/
+*.pyc
+.DS_Store

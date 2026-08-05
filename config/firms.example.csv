@@ -1,0 +1,33 @@
+name,tier
+# Format example ONLY — rename to firms.csv and replace with the fund's own
+# ~11,500-firm export (brief §5). Any column named name/firm/firm_name/investor
+# is used; a tier column is honoured when present, otherwise the tier lists in
+# thesis.yaml decide. Lines starting with # are ignored.
+#
+# The rows below are the firms already in thesis.yaml, shown purely to
+# demonstrate the shape. This file is NOT loaded — only config/firms.csv is.
+Andreessen Horowitz,1
+Sequoia Capital,1
+Lux Capital,1
+Founders Fund,1
+Lightspeed,1
+Index Ventures,1
+Bessemer Venture Partners,1
+Insight Partners,1
+IVP,1
+Coatue Management,1
+Altimeter Capital,1
+Tiger Global,1
+Thrive Capital,1
+Conviction,1
+Khosla Ventures,1
+Shield Capital,1
+8VC,1
+Ribbit Capital,1
+Spark Capital,1
+Benchmark,1
+First Round Capital,2
+Greylock,2
+Menlo Ventures,2
+Techstars,3
+500 Global,3
