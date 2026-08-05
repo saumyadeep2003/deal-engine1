@@ -1,0 +1,1417 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Thirdbase Deal Engine</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><rect width='16' height='16' rx='3' fill='%231F3B57'/><path d='M4 11.5V4.5h2.2l1.8 4 1.8-4H12v7h-1.6V7.2L8.6 11H7.4L5.6 7.2v4.3z' fill='%23fff'/></svg>">
+<style>
+/* ---------------------------------------------------------------- palette ---
+   Validated ramps (dataviz validator, ordinal mode, both modes ALL PASS):
+     funnel  light #86b6ef,#5598e7,#2a78d6,#1c5cab,#104281  (large->small = light->dark)
+     funnel  dark  #184f95,#256abf,#3987e5,#6da7ec,#9ec5f4  (reversed: small deep
+             stages get the LIGHT steps — the legible ones on a dark surface)
+     rec     light #86b6ef,#2a78d6,#104281   dark #256abf,#3987e5,#9ec5f4
+   Sectors are NOMINAL categories -> ONE hue for every bar (never a value-ramp). */
+.viz-root, :root {
+  color-scheme: light;
+  --page:#f9f9f7; --surface-1:#fcfcfb;
+  --ink:#0b0b0b; --ink-2:#52514e; --muted:#898781;
+  --grid:#e1e0d9; --axis:#c3c2b7; --border:rgba(11,11,11,0.10);
+  --series-1:#2a78d6;
+  --ord-1:#86b6ef; --ord-2:#5598e7; --ord-3:#2a78d6; --ord-4:#1c5cab; --ord-5:#104281;
+  --rec-pass:#86b6ef; --rec-watch:#2a78d6; --rec-deep:#104281;
+  --good:#0ca30c; --warning:#fab219; --serious:#ec835a; --critical:#d03b3b;
+  --success-text:#006300;
+}
+@media (prefers-color-scheme: dark) {
+  :root:where(:not([data-theme="light"])) {
+    color-scheme: dark;
+    --page:#0d0d0d; --surface-1:#1a1a19;
+    --ink:#ffffff; --ink-2:#c3c2b7; --muted:#898781;
+    --grid:#2c2c2a; --axis:#383835; --border:rgba(255,255,255,0.10);
+    --series-1:#3987e5;
+    --ord-1:#184f95; --ord-2:#256abf; --ord-3:#3987e5; --ord-4:#6da7ec; --ord-5:#9ec5f4;
+    --rec-pass:#256abf; --rec-watch:#3987e5; --rec-deep:#9ec5f4;
+    --success-text:#0ca30c;
+  }
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --page:#0d0d0d; --surface-1:#1a1a19;
+  --ink:#ffffff; --ink-2:#c3c2b7; --muted:#898781;
+  --grid:#2c2c2a; --axis:#383835; --border:rgba(255,255,255,0.10);
+  --series-1:#3987e5;
+  --ord-1:#184f95; --ord-2:#256abf; --ord-3:#3987e5; --ord-4:#6da7ec; --ord-5:#9ec5f4;
+  --rec-pass:#256abf; --rec-watch:#3987e5; --rec-deep:#9ec5f4;
+  --success-text:#0ca30c;
+}
+
+* { box-sizing: border-box; }
+body {
+  margin:0; background:var(--page); color:var(--ink);
+  font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+  font-size:14.5px; line-height:1.55;
+}
+a { color:var(--series-1); text-decoration:none; }
+a:hover { text-decoration:underline; }
+.wrap { max-width:1400px; margin:0 auto; padding:20px 24px 64px; }
+
+header.top { display:flex; align-items:baseline; gap:14px; flex-wrap:wrap;
+  padding-bottom:14px; margin-bottom:14px; }
+header.top h1 { font-size:21px; margin:0; font-weight:680; letter-spacing:-0.01em; }
+header.top .sub { color:var(--ink-2); font-size:13px; }
+header.top .spacer { flex:1; }
+button, select, input {
+  font:inherit; color:var(--ink); background:var(--surface-1);
+  border:1px solid var(--border); border-radius:8px; padding:7px 12px; min-height:36px;
+}
+button { cursor:pointer; }
+button:hover { background:var(--page); }
+button.primary { background:var(--series-1); color:#fff; border-color:transparent;
+  font-weight:620; }
+button.primary:hover { filter:brightness(1.08); }
+button.ghost { border:none; background:transparent; color:var(--ink-2); padding:4px 8px;
+  min-height:26px; font-size:12.5px; }
+button.ghost:hover { background:var(--page); }
+
+/* status strip — the "what is it doing right now" answer, always visible */
+.status { background:var(--surface-1); border:1px solid var(--border); border-radius:12px;
+  padding:15px 18px; margin-bottom:14px; display:flex; gap:14px; align-items:center;
+  flex-wrap:wrap; }
+.status .dot { width:12px; height:12px; border-radius:50%; flex:none; }
+.status .dot.live { background:var(--series-1); animation:pulse 1.4s ease-in-out infinite; }
+.status .dot.done { background:var(--good); }
+@keyframes pulse { 0%,100%{opacity:1; transform:scale(1)} 50%{opacity:.45; transform:scale(.8)} }
+.status .stext { flex:1; min-width:240px; }
+.status .stext b { font-size:15px; }
+.status .stext .ssub { color:var(--ink-2); font-size:12.5px; margin-top:1px; }
+.status .actions { display:flex; gap:8px; flex-wrap:wrap; }
+
+/* toast — the "search finished" announcement */
+#toast { position:fixed; left:50%; bottom:26px; transform:translateX(-50%) translateY(20px);
+  background:var(--surface-1); color:var(--ink); border:1px solid var(--border);
+  border-left:4px solid var(--good); border-radius:10px; padding:12px 18px;
+  box-shadow:0 8px 30px rgba(0,0,0,.2); opacity:0; transition:all .25s; z-index:80;
+  font-size:13.5px; max-width:min(560px,92vw); }
+#toast.show { opacity:1; transform:translateX(-50%) translateY(0); }
+
+/* how it works */
+.how { display:grid; grid-template-columns:repeat(auto-fit,minmax(210px,1fr)); gap:10px;
+  margin-bottom:14px; }
+.how .step { background:var(--surface-1); border:1px solid var(--border); border-radius:10px;
+  padding:10px 13px; font-size:12.5px; color:var(--ink-2); }
+.how .step b { color:var(--ink); display:block; font-size:13px; margin-bottom:1px; }
+.how .n { display:inline-flex; width:20px; height:20px; border-radius:50%;
+  background:var(--series-1); color:#fff; font-size:11.5px; font-weight:700;
+  align-items:center; justify-content:center; margin-right:6px; }
+
+.kpis { display:grid; grid-template-columns:repeat(auto-fit,minmax(158px,1fr)); gap:12px;
+  margin-bottom:14px; }
+.tile { background:var(--surface-1); border:1px solid var(--border); border-radius:10px;
+  padding:13px 15px; }
+.tile .label { color:var(--ink-2); font-size:12px; }
+.tile .value { font-size:27px; font-weight:650; letter-spacing:-0.02em; margin-top:2px; }
+.tile .foot { color:var(--muted); font-size:11.5px; margin-top:1px; }
+
+/* top picks cards */
+.picks { display:grid; grid-template-columns:repeat(auto-fill,minmax(280px,1fr)); gap:12px; }
+.pick { background:var(--surface-1); border:1px solid var(--border); border-radius:12px;
+  padding:14px 16px; display:flex; flex-direction:column; gap:7px; }
+.pick .pname { font-weight:660; font-size:15px; }
+.pick .pwhy { color:var(--ink-2); font-size:12.5px; flex:1; }
+.pick .pfoot { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+.rank-pill { display:inline-flex; align-items:center; gap:5px; background:var(--page);
+  border:1px solid var(--border); border-radius:999px; padding:2px 9px; font-size:11.5px;
+  color:var(--ink-2); }
+
+.grid2 { display:grid; grid-template-columns:1fr 1fr; gap:14px; }
+@media (max-width:1000px){ .grid2 { grid-template-columns:1fr; } }
+
+.card { background:var(--surface-1); border:1px solid var(--border); border-radius:12px;
+  padding:15px 17px; margin-bottom:14px; }
+.card > h2 { font-size:15px; margin:0 0 2px; font-weight:650; }
+.card .csub { color:var(--muted); font-size:12.5px; margin-bottom:12px; }
+.card .chead { display:flex; align-items:flex-start; gap:10px; }
+.card .chead .spacer { flex:1; }
+
+svg text { font-family:inherit; }
+.tick { fill:var(--muted); font-size:11px; }
+.tick.num { font-variant-numeric: tabular-nums; }
+.dlabel { fill:var(--ink-2); font-size:11.5px; font-weight:600; }
+.gridline { stroke:var(--grid); stroke-width:1; }
+.baseline { stroke:var(--axis); stroke-width:1; }
+.mark { cursor:default; }
+.mark:hover, .mark:focus { filter:brightness(1.12); outline:none; }
+
+.legend { display:flex; gap:14px; flex-wrap:wrap; margin-top:10px; }
+.legend .item { display:flex; align-items:center; gap:6px; color:var(--ink-2); font-size:12px; }
+.legend .sw { width:11px; height:11px; border-radius:2px; flex:none; }
+
+table { width:100%; border-collapse:collapse; font-size:12.5px; }
+th, td { text-align:left; padding:7px 9px; border-bottom:1px solid var(--border);
+  vertical-align:top; }
+th { color:var(--ink-2); font-weight:620; font-size:11px; text-transform:uppercase;
+  letter-spacing:0.04em; position:sticky; top:0; background:var(--surface-1); }
+td.num, th.num { text-align:right; font-variant-numeric: tabular-nums; }
+tbody tr:hover { background:var(--page); }
+.scroll { overflow:auto; max-height:560px; border-radius:8px; }
+.gated { color:var(--muted); font-style:italic; }
+.chip { display:inline-flex; align-items:center; gap:5px; padding:1px 8px; border-radius:999px;
+  font-size:11.5px; border:1px solid var(--border); white-space:nowrap; }
+.chip .ic { font-size:11px; }
+.rec { font-weight:640; }
+.muted { color:var(--muted); }
+.warnbox { border-left:3px solid var(--warning); padding:9px 13px; background:var(--surface-1);
+  border-radius:0 8px 8px 0; margin-bottom:12px; font-size:12.5px; color:var(--ink-2); }
+.empty { color:var(--muted); font-style:italic; padding:12px 2px; }
+.filters { display:flex; gap:10px; align-items:center; flex-wrap:wrap; margin:0 0 10px; }
+.filters label { color:var(--muted); font-size:12px; }
+
+#tip { position:fixed; pointer-events:none; opacity:0; transition:opacity .1s;
+  background:var(--surface-1); color:var(--ink); border:1px solid var(--border);
+  border-radius:8px; padding:8px 10px; font-size:12px; box-shadow:0 4px 18px rgba(0,0,0,.14);
+  z-index:50; max-width:280px; }
+#tip .v { font-weight:660; font-size:14px; }
+#tip .k { color:var(--ink-2); }
+#tip .key { display:inline-block; width:12px; height:2px; vertical-align:middle;
+  margin-right:6px; }
+
+.drawer { position:fixed; inset:0 0 0 auto; width:min(780px,94vw); background:var(--surface-1);
+  border-left:1px solid var(--border); box-shadow:-8px 0 32px rgba(0,0,0,.18);
+  transform:translateX(100%); transition:transform .18s; z-index:60; display:flex;
+  flex-direction:column; }
+.drawer.open { transform:none; }
+.drawer .dhead { display:flex; align-items:center; gap:10px; padding:14px 18px;
+  border-bottom:1px solid var(--border); }
+.drawer .dbody { overflow:auto; padding:16px 18px 40px; }
+.drawer pre { white-space:pre-wrap; font-family:ui-monospace,SFMono-Regular,Menlo,monospace;
+  font-size:12px; line-height:1.55; }
+.answer { white-space:pre-wrap; background:var(--page); border:1px solid var(--border);
+  border-radius:8px; padding:11px 13px; margin-top:10px; font-size:12.5px; }
+.stale-note { font-size:11.5px; }
+.rowlink { cursor:pointer; }
+details.explain { margin:2px 0 10px; }
+details.explain summary { color:var(--series-1); font-size:12.5px; cursor:pointer; }
+details.explain p { color:var(--ink-2); font-size:12.5px; margin:6px 0 0; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header class="top">
+  <div>
+    <h1>Thirdbase Deal Engine</h1>
+    <div class="sub">Finds new investment opportunities for the fund — automatically, from
+      public filings, news and technical communities — and ranks them so you know where to
+      look first.</div>
+  </div>
+  <span class="spacer"></span>
+  <span id="healthChip"></span>
+  <button class="ghost" id="themeBtn" title="Switch between light and dark">◐ Theme</button>
+</header>
+
+<!-- what is it doing RIGHT NOW -->
+<div class="status" id="searchStatus" style="flex-direction:column; align-items:stretch">
+  <div style="display:flex; gap:14px; align-items:center; flex-wrap:wrap">
+    <span class="dot done" id="statusDot"></span>
+    <div class="stext">
+      <b id="statusTitle">Checking status…</b>
+      <div class="ssub" id="statusSub"></div>
+    </div>
+    <div class="actions">
+      <button id="btnRefresh" class="primary">🔍 Search for new deals</button>
+      <button id="btnDigest">✉️ Email me the summary</button>
+      <button id="btnLlmTest">🤖 Test AI connection</button>
+      <a id="dlWorkbook" href="/api/workbook" download><button>⬇ Download Excel</button></a>
+    </div>
+  </div>
+  <!-- live step-by-step progress, visible only while a search runs -->
+  <div id="stepPanel" hidden style="border-top:1px solid var(--border); margin-top:12px;
+       padding-top:10px">
+    <div style="display:flex; gap:12px; align-items:center; margin-bottom:8px;
+         flex-wrap:wrap">
+      <div id="etaLine" class="ssub" style="color:var(--ink-2)"></div>
+      <button id="btnStop" style="font-size:12px; padding:3px 10px">■ Stop this search</button>
+    </div>
+    <div id="stepList" style="display:grid; grid-template-columns:repeat(auto-fill,
+         minmax(300px,1fr)); gap:3px 18px; font-size:12.5px"></div>
+  </div>
+  <!-- what a search checks — always visible, so the sources are never a mystery -->
+  <div id="planPanel" style="border-top:1px solid var(--border); margin-top:12px;
+       padding-top:10px">
+    <div style="display:flex; gap:10px; align-items:baseline; flex-wrap:wrap">
+      <b style="font-size:13px">Where this search looks</b>
+      <span id="planSummary" class="ssub" style="color:var(--ink-2)"></span>
+      <button id="planToggle" class="ghost" style="font-size:12px; padding:2px 8px">show all
+        steps</button>
+    </div>
+    <div id="planList" hidden style="display:grid; grid-template-columns:repeat(auto-fill,
+         minmax(300px,1fr)); gap:3px 18px; font-size:12.5px; margin-top:8px"></div>
+  </div>
+</div>
+
+<div id="postureWarn"></div>
+
+<!-- plain-words explanation of the machine -->
+<div class="how">
+  <div class="step"><b><span class="n">1</span>Collect</b>
+    Every hour it reads new SEC funding filings, tech news, research papers and
+    engineer discussions.</div>
+  <div class="step"><b><span class="n">2</span>Match</b>
+    It keeps only companies that fit the fund's focus areas (AI, robotics, defence,
+    fintech…) and drops the noise.</div>
+  <div class="step"><b><span class="n">3</span>Rank</b>
+    Each company is compared against similar companies at the same stage — not judged
+    in isolation.</div>
+  <div class="step"><b><span class="n">4</span>Explain</b>
+    Top companies get a one-page brief, and every number can show you exactly where it
+    came from.</div>
+</div>
+
+<div class="kpis" id="kpis"></div>
+
+<div class="card">
+  <div class="chead">
+    <div>
+      <h2>🕘 Previous searches</h2>
+      <div class="csub">Every search is saved with exactly what it showed at the time — so
+        yesterday's picks are always here, even after new searches re-rank things.
+        Click one to see its deals and what changed.</div>
+    </div>
+  </div>
+  <div class="scroll" style="max-height:240px"><table id="runsTable"></table></div>
+</div>
+
+<div class="card" id="topPicksCard">
+  <div class="chead">
+    <div>
+      <h2>⭐ Top picks — worth a close look</h2>
+      <div class="csub">The highest-ranked companies right now. Click “Why?” on any card to
+        see every piece of information behind it, with links to the original sources.</div>
+    </div>
+  </div>
+  <div class="picks" id="topPicks"></div>
+</div>
+
+<div class="grid2">
+  <div class="card">
+    <div class="chead">
+      <div>
+        <h2>How the search narrows down</h2>
+        <div class="csub">From everything collected to the few companies worth your time.
+          Each step is cheaper to pass than the next, so effort goes where it matters.</div>
+      </div>
+      <span class="spacer"></span>
+      <button class="ghost" data-toggle="funnel">Show as table</button>
+    </div>
+    <div id="funnel"></div>
+    <div id="funnelTable" hidden></div>
+  </div>
+
+  <div class="card">
+    <div class="chead">
+      <div>
+        <h2>Where companies stand</h2>
+        <div class="csub">Every company gets one of three statuses, based on how it ranks
+          against similar companies — never a score in isolation.</div>
+      </div>
+      <span class="spacer"></span>
+      <button class="ghost" data-toggle="recmix">Show as table</button>
+    </div>
+    <div id="recmix"></div>
+    <div id="recmixTable" hidden></div>
+  </div>
+</div>
+
+<div class="card">
+  <div class="chead">
+    <div>
+      <h2>📈 Trends we're spotting early</h2>
+      <div class="csub">Areas where engineers and researchers are buzzing but the press
+        hasn't caught on yet. A higher score = earlier signal. Each trend lists the best
+        matching companies already in the pipeline.</div>
+    </div>
+    <span class="spacer"></span>
+    <button class="ghost" data-toggle="sectors">Show as table</button>
+  </div>
+  <div id="sectors"></div>
+  <div id="sectorsTable" hidden></div>
+</div>
+
+<!-- one filter row, above the list it controls -->
+<div class="filters">
+  <label for="fStatus">Show</label>
+  <select id="fStatus">
+    <option value="all">All companies</option>
+    <option value="Deep Dive">Top picks only</option>
+    <option value="Watch">Watching</option>
+    <option value="Pass">Not a fit</option>
+  </select>
+  <label for="fSector">Focus area</label>
+  <select id="fSector"><option value="all">All</option></select>
+  <label for="fQ">Find a company</label>
+  <input id="fQ" type="search" placeholder="type a name…" style="width:180px">
+</div>
+
+<div class="card">
+  <div class="chead">
+    <div><h2>All companies found</h2>
+      <div class="csub" id="pipeSub"></div></div>
+    <span class="spacer"></span>
+  </div>
+  <details class="explain">
+    <summary>What do the dashes like “needs paid data” mean?</summary>
+    <p>Some details (team size, valuations, growth) only exist in paid databases like
+      PitchBook or Coresignal, which this demo doesn't subscribe to. Rather than guessing,
+      the tool leaves those cells empty and says why — an honest blank beats a made-up
+      number. Everything that IS shown comes from a real, linked source.</p>
+  </details>
+  <div class="scroll"><table id="pipeTable"></table></div>
+</div>
+
+<div class="grid2">
+  <div class="card">
+    <h2>💬 Ask a question</h2>
+    <div class="csub">Plain-English questions, answered only from what the tool has actually
+      collected — with links and dates, so you can check every claim.</div>
+    <div style="display:flex; gap:8px">
+      <input id="chatQ" style="flex:1" placeholder="e.g. who's quietly investing in robotics?">
+      <button id="chatGo" class="primary">Ask</button>
+    </div>
+    <div style="margin-top:8px; display:flex; gap:6px; flex-wrap:wrap" id="chatExamples"></div>
+    <div class="answer" id="chatA" hidden></div>
+  </div>
+  <div class="card">
+    <h2>🎯 Describe what you're looking for</h2>
+    <div class="csub">Write an investment idea in your own words and the tool finds the
+      closest matching companies it has already discovered.</div>
+    <div style="display:flex; gap:8px">
+      <input id="scanQ" style="flex:1" placeholder="e.g. robots that inspect energy infrastructure">
+      <button id="scanGo" class="primary">Find matches</button>
+    </div>
+    <div class="answer" id="scanA" hidden></div>
+  </div>
+</div>
+
+<div class="grid2">
+  <div class="card">
+    <h2>What other investors are doing</h2>
+    <div class="csub">New funds and investments by firms the fund tracks — straight from
+      real regulatory filings.</div>
+    <div class="scroll" style="max-height:330px"><table id="peerTable"></table></div>
+  </div>
+  <div class="card">
+    <h2>Which investors team up</h2>
+    <div class="csub">Pairs of firms that repeatedly invest together — useful when building
+      a syndicate.</div>
+    <div class="scroll" style="max-height:330px"><table id="heatTable"></table></div>
+  </div>
+</div>
+
+<div class="grid2">
+  <div class="card">
+    <h2>What people are saying</h2>
+    <div class="csub">Real quotes about pipeline companies from engineer communities, each
+      linked to the original post. (X/Twitter, Blind and podcasts need paid access.)</div>
+    <div class="scroll" style="max-height:330px"><table id="commTable"></table></div>
+  </div>
+  <div class="card">
+    <h2>News worth your time</h2>
+    <div class="csub">A short, curated list — never a firehose — with one line on why each
+      item matters to this fund.</div>
+    <div class="scroll" style="max-height:330px"><table id="newsTable"></table></div>
+  </div>
+</div>
+
+<div class="grid2">
+  <div class="card">
+    <h2>Gone quiet — your call</h2>
+    <div class="csub">Companies with no news or activity for 90+ days. The tool never
+      removes anything by itself — partners decide.</div>
+    <div class="scroll" style="max-height:300px"><table id="staleTable"></table></div>
+  </div>
+  <div class="card">
+    <h2>Data sources</h2>
+    <div class="csub">Every source is checked hourly. If one goes quiet, it's flagged here —
+      nothing fails silently.</div>
+    <div class="scroll" style="max-height:300px"><table id="srcTable"></table></div>
+  </div>
+</div>
+
+</div><!-- /wrap -->
+
+<div id="tip" role="status" aria-live="polite"></div>
+<div id="toast" role="status" aria-live="polite"></div>
+
+<div class="drawer" id="drawer" aria-hidden="true">
+  <div class="dhead">
+    <strong id="drawerTitle">Details</strong>
+    <span class="spacer" style="flex:1"></span>
+    <button class="ghost" id="drawerClose">✕ Close</button>
+  </div>
+  <div class="dbody" id="drawerBody"></div>
+</div>
+
+<script>
+/* ------------------------------------------------------------------ helpers */
+// All API-supplied strings go in via textContent — never innerHTML.
+const $ = s => document.querySelector(s);
+function el(tag, opts = {}, kids = []) {
+  const n = document.createElement(tag);
+  if (opts.cls) n.className = opts.cls;
+  if (opts.text !== undefined) n.textContent = String(opts.text);
+  if (opts.title) n.title = opts.title;
+  if (opts.href) n.href = opts.href;
+  if (opts.attrs) for (const [k, v] of Object.entries(opts.attrs)) n.setAttribute(k, v);
+  if (opts.on) for (const [k, v] of Object.entries(opts.on)) n.addEventListener(k, v);
+  for (const k of kids) if (k) n.appendChild(k);
+  return n;
+}
+function svgEl(tag, attrs = {}) {
+  const n = document.createElementNS("http://www.w3.org/2000/svg", tag);
+  for (const [k, v] of Object.entries(attrs)) n.setAttribute(k, v);
+  return n;
+}
+const compact = n => n === null || n === undefined ? "—"
+  : Math.abs(n) >= 1e9 ? (n / 1e9).toFixed(2) + "B"
+  : Math.abs(n) >= 1e6 ? (n / 1e6).toFixed(1) + "M"
+  : Math.abs(n) >= 1e3 ? (n / 1e3).toFixed(1) + "K" : String(n);
+const money = n => n === null || n === undefined ? null : "$" + compact(n);
+const css = v => getComputedStyle(document.documentElement).getPropertyValue(v).trim();
+
+/* Friendly names for the three statuses — API values stay Pass/Watch/Deep Dive. */
+const REC_LABEL = { "Deep Dive": "Top pick", "Watch": "Watching", "Pass": "Not a fit" };
+/* percentile -> "#3 of 16" — ordinal position reads honestly for small groups,
+   where "top 1%" would be nonsense */
+function rankOf(percentile, n) {
+  if (!n || percentile === null || percentile === undefined) return null;
+  return Math.min(n, Math.max(1, n - Math.round((percentile / 100) * n) + 1));
+}
+const ord = i => i + (["th","st","nd","rd"][((i%100)>10&&(i%100)<14)?0:Math.min(i%10,4)]||"th");
+const sectorName = s => !s || s === "unclassified" ? "General tech" : s;
+const FUNNEL_LABEL = {
+  "Raw signals ingested": "Pieces of information collected",
+  "Companies resolved": "Real companies identified",
+  "Survived deterministic filter": "Match the fund's focus",
+  "Watch or better": "Worth watching or better",
+  "Deep Dive": "Top picks",
+};
+
+/* A label set inside a coloured fill picks white or ink by the fill's luminance. */
+function inkOn(hex) {
+  const m = /^#?([0-9a-f]{6})$/i.exec((hex || "").trim());
+  if (!m) return "#ffffff";
+  const n = parseInt(m[1], 16);
+  const lin = c => { c /= 255; return c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4; };
+  const L = 0.2126 * lin((n >> 16) & 255) + 0.7152 * lin((n >> 8) & 255) + 0.0722 * lin(n & 255);
+  return L > 0.42 ? "#0b0b0b" : "#ffffff";
+}
+
+/* bar path: square at the baseline, 4px rounded at the data end (horizontal) */
+function barPathH(x, y, w, h, r = 4) {
+  r = Math.max(0, Math.min(r, w, h / 2));
+  return `M${x},${y} H${x + w - r} A${r},${r} 0 0 1 ${x + w},${y + r}`
+       + ` V${y + h - r} A${r},${r} 0 0 1 ${x + w - r},${y + h} H${x} Z`;
+}
+
+/* one tooltip, values lead, labels follow; hit target includes padding */
+const tip = $("#tip");
+function showTip(evt, rows) {
+  tip.textContent = "";
+  for (const r of rows) {
+    const line = el("div");
+    if (r.color) {
+      const key = el("span", { cls: "key" });
+      key.style.background = r.color;
+      line.appendChild(key);
+    }
+    line.appendChild(el("span", { cls: "v", text: r.value }));
+    if (r.label) line.appendChild(el("span", { cls: "k", text: "  " + r.label }));
+    tip.appendChild(line);
+  }
+  tip.style.opacity = "1";
+  moveTip(evt);
+}
+function moveTip(evt) {
+  const pad = 14, w = tip.offsetWidth, h = tip.offsetHeight;
+  let x = (evt.clientX ?? 0) + pad, y = (evt.clientY ?? 0) + pad;
+  if (x + w > innerWidth - 8) x = evt.clientX - w - pad;
+  if (y + h > innerHeight - 8) y = evt.clientY - h - pad;
+  tip.style.left = x + "px"; tip.style.top = y + "px";
+}
+function hideTip() { tip.style.opacity = "0"; }
+function hoverable(node, rows) {
+  node.setAttribute("tabindex", "0");
+  node.addEventListener("pointerenter", e => showTip(e, rows));
+  node.addEventListener("pointermove", moveTip);
+  node.addEventListener("pointerleave", hideTip);
+  node.addEventListener("focus", () => {
+    const r = node.getBoundingClientRect();
+    showTip({ clientX: r.right, clientY: r.top }, rows);
+  });
+  node.addEventListener("blur", hideTip);
+}
+
+function tableFrom(headers, rows) {
+  const t = el("table");
+  const thead = el("thead");
+  const tr = el("tr");
+  headers.forEach(h => tr.appendChild(el("th", { cls: h.num ? "num" : "", text: h.label })));
+  thead.appendChild(tr); t.appendChild(thead);
+  const tb = el("tbody");
+  rows.forEach(r => {
+    const row = el("tr");
+    r.forEach((c, i) => {
+      const td = el("td", { cls: headers[i] && headers[i].num ? "num" : "" });
+      if (c && typeof c === "object") {
+        if (c.node) td.appendChild(c.node);
+        else td.textContent = c.text === undefined || c.text === null ? "—" : String(c.text);
+        if (c.cls) td.className = (td.className + " " + c.cls).trim();
+        if (c.title) td.title = c.title;
+      } else {
+        td.textContent = c === null || c === undefined || c === "" ? "—" : String(c);
+      }
+      row.appendChild(td);
+    });
+    tb.appendChild(row);
+  });
+  t.appendChild(tb);
+  return t;
+}
+function mount(sel, node) { const h = $(sel); h.textContent = ""; if (node) h.appendChild(node); }
+function mount2(sel, node, emptyMsg) {
+  const host = document.querySelector(sel);
+  const rows = node.querySelectorAll("tbody tr").length;
+  const next = rows ? node : el("div", { cls: "empty", text: emptyMsg });
+  next.id = host.id;
+  host.replaceWith(next);
+}
+function toast(msg, ms = 9000) {
+  const t = $("#toast"); t.textContent = msg; t.classList.add("show");
+  clearTimeout(window._toastT);
+  window._toastT = setTimeout(() => t.classList.remove("show"), ms);
+}
+
+/* ------------------------------------------------------------------- charts */
+
+function drawFunnel(stages) {
+  const ordinal = ["--ord-1", "--ord-2", "--ord-3", "--ord-4", "--ord-5"].map(css);
+  const H = 34, bar = 20, padL = 216, padR = 66, top = 6;
+  const w = Math.max(460, ($("#funnel").clientWidth || 560));
+  const plotW = w - padL - padR;
+  const max = Math.max(...stages.map(s => s.value), 1);
+  const svg = svgEl("svg", { width: "100%", height: top + stages.length * H + 8,
+    viewBox: `0 0 ${w} ${top + stages.length * H + 8}`, role: "img",
+    "aria-label": "How the search narrows down, step by step" });
+
+  stages.forEach((s, i) => {
+    const label = FUNNEL_LABEL[s.stage] || s.stage;
+    const y = top + i * H + (H - bar) / 2;
+    const bw = Math.max(2, (s.value / max) * plotW);
+    const color = ordinal[Math.min(i, ordinal.length - 1)];
+    svg.appendChild(svgEl("text", { x: padL - 10, y: y + bar / 2 + 4,
+      "text-anchor": "end", class: "tick" })).textContent = label;
+    const p = svgEl("path", { d: barPathH(padL, y, bw, bar), fill: color, class: "mark" });
+    hoverable(p, [{ value: s.value.toLocaleString(), label, color }]);
+    svg.appendChild(p);
+    const lbl = svgEl("text", { x: padL + bw + 8, y: y + bar / 2 + 4, class: "dlabel" });
+    lbl.textContent = s.value.toLocaleString();
+    svg.appendChild(lbl);
+  });
+  svg.appendChild(svgEl("line", { x1: padL, y1: top, x2: padL,
+    y2: top + stages.length * H, class: "baseline" }));
+  mount("#funnel", svg);
+  mount("#funnelTable", tableFrom([{ label: "Step" }, { label: "Count", num: true }],
+    stages.map(s => [FUNNEL_LABEL[s.stage] || s.stage, s.value.toLocaleString()])));
+}
+
+function drawRecMix(recs) {
+  const order = [["Deep Dive", css("--rec-deep")], ["Watch", css("--rec-watch")],
+                 ["Pass", css("--rec-pass")]];
+  const total = order.reduce((a, [k]) => a + (recs[k] || 0), 0);
+  const host = $("#recmix");
+  if (!total) {
+    mount("#recmix", el("div", { cls: "empty",
+      text: "Nothing ranked yet — the current search will fill this in." }));
+    mount("#recmixTable", null); return;
+  }
+  const w = Math.max(360, host.clientWidth || 520), h = 96, barY = 20, barH = 26, gap = 2;
+  const svg = svgEl("svg", { width: "100%", height: h, viewBox: `0 0 ${w} ${h}`,
+    role: "img", "aria-label": "Where companies stand" });
+  const usable = w - gap * (order.length - 1);
+  let x = 0;
+  order.forEach(([k, color], i) => {
+    const v = recs[k] || 0;
+    if (!v) return;
+    const segW = (v / total) * usable;
+    const isLast = i === order.length - 1;
+    const d = isLast ? barPathH(x, barY, segW, barH)
+                     : `M${x},${barY} h${segW} v${barH} h${-segW} Z`;
+    const p = svgEl("path", { d, fill: color, class: "mark" });
+    hoverable(p, [{ value: `${v} (${Math.round(100 * v / total)}%)`,
+                    label: REC_LABEL[k], color }]);
+    svg.appendChild(p);
+    const text = String(v);
+    if (segW > text.length * 8 + 18) {
+      const t = svgEl("text", { x: x + segW / 2, y: barY + barH / 2 + 4,
+        "text-anchor": "middle", "font-size": "11.5", "font-weight": "600",
+        fill: inkOn(color) });
+      t.textContent = text;
+      svg.appendChild(t);
+    }
+    x += segW + gap;
+  });
+  const cap = svgEl("text", { x: 0, y: 12, class: "tick" });
+  cap.textContent = `${total} companies ranked`;
+  svg.appendChild(cap);
+  mount("#recmix", svg);
+  const leg = el("div", { cls: "legend" });
+  order.forEach(([k, color]) => {
+    const sw = el("span", { cls: "sw" }); sw.style.background = color;
+    leg.appendChild(el("div", { cls: "item" },
+      [sw, el("span", { text: `${REC_LABEL[k]} — ${recs[k] || 0}` })]));
+  });
+  $("#recmix").appendChild(leg);
+  mount("#recmixTable", tableFrom([{ label: "Status" }, { label: "Companies", num: true },
+    { label: "Share", num: true }],
+    order.map(([k]) => [REC_LABEL[k], recs[k] || 0,
+      Math.round(100 * (recs[k] || 0) / total) + "%"])));
+}
+
+/* Sectors — NOMINAL categories, so ONE hue for every bar. */
+function drawSectors(rows) {
+  if (!rows.length) {
+    mount("#sectors", el("div", { cls: "empty",
+      text: "No clear early trend yet. The tool only calls a trend when several "
+          + "independent sources agree — it never invents one to fill space." }));
+    mount("#sectorsTable", null); return;
+  }
+  const color = css("--series-1");
+  const H = 30, bar = 18, padL = 250, padR = 130, top = 6;
+  const w = Math.max(520, $("#sectors").clientWidth || 900);
+  const plotW = w - padL - padR;
+  const max = Math.max(...rows.map(r => r.ratio || 0), 1);
+  const svg = svgEl("svg", { width: "100%", height: top + rows.length * H + 22,
+    viewBox: `0 0 ${w} ${top + rows.length * H + 22}`, role: "img",
+    "aria-label": "Early trends by buzz-versus-press score" });
+  const ticks = [0, max / 2, max];
+  ticks.forEach(t => {
+    const x = padL + (t / max) * plotW;
+    svg.appendChild(svgEl("line", { x1: x, y1: top, x2: x, y2: top + rows.length * H,
+      class: t === 0 ? "baseline" : "gridline" }));
+    const lt = svgEl("text", { x, y: top + rows.length * H + 14, "text-anchor": "middle",
+      class: "tick num" });
+    lt.textContent = t.toFixed(t === 0 ? 0 : 1);
+    svg.appendChild(lt);
+  });
+  rows.forEach((r, i) => {
+    const y = top + i * H + (H - bar) / 2;
+    const bw = Math.max(2, ((r.ratio || 0) / max) * plotW);
+    const full = r.label || "";
+    const name = svgEl("text", { x: padL - 10, y: y + bar / 2 + 4, "text-anchor": "end",
+      class: "tick" });
+    name.textContent = full.length > 40 ? full.slice(0, 39) + "…" : full;
+    if (full.length > 40) { const t = svgEl("title"); t.textContent = full; name.appendChild(t); }
+    svg.appendChild(name);
+    const p = svgEl("path", { d: barPathH(padL, y, bw, bar), fill: color, class: "mark" });
+    hoverable(p, [
+      { value: (r.ratio ?? 0).toFixed(2), label: "early-signal score", color },
+      { value: r.signal_velocity ?? "—", label: "technical buzz, last 30 days" },
+      { value: r.consensus_volume ?? "—", label: "press coverage" },
+      { value: r.source_diversity ?? "—", label: "independent sources agreeing" },
+    ]);
+    svg.appendChild(p);
+    const lbl = svgEl("text", { x: padL + bw + 8, y: y + bar / 2 + 4, class: "dlabel" });
+    lbl.textContent = (r.ratio ?? 0).toFixed(1) + (r.contrarian ? "  ⚠ against the crowd" : "");
+    svg.appendChild(lbl);
+  });
+  mount("#sectors", svg);
+  mount("#sectorsTable", tableFrom(
+    [{ label: "Trend" }, { label: "Score", num: true }, { label: "Tech buzz", num: true },
+     { label: "Press", num: true }, { label: "Sources", num: true },
+     { label: "Call" }, { label: "Best companies in it" }, { label: "Proof" }],
+    rows.map(r => [r.label, (r.ratio ?? 0).toFixed(2), r.signal_velocity,
+      r.consensus_volume, r.source_diversity,
+      r.contrarian ? "⚠ against the crowd" : "emerging",
+      (r.companies || []).map(c => c.company).join(", ") || "—",
+      { node: r.evidence && r.evidence[0] && r.evidence[0].url
+          ? el("a", { href: r.evidence[0].url, text: "source ↗", attrs: { target: "_blank" } })
+          : el("span", { cls: "muted", text: "—" }) }])));
+}
+
+/* --------------------------------------------------------------------- tables */
+
+function recChip(rec, overridden) {
+  const c = el("span", { cls: "chip rec", text: REC_LABEL[rec] || rec || "—" });
+  const col = rec === "Deep Dive" ? css("--rec-deep")
+            : rec === "Watch" ? css("--rec-watch") : css("--rec-pass");
+  const dot = el("span", { cls: "sw" });
+  dot.style.cssText = `width:8px;height:8px;border-radius:50%;background:${col}`;
+  c.prepend(dot);
+  if (overridden) { c.title = "A partner set this by hand — the tool never overrides you"; c.append(" ✎"); }
+  return c;
+}
+
+function drawTopPicks(rows) {
+  const host = $("#topPicks"); host.textContent = "";
+  const picks = rows.filter(r => (r.human_override || r.recommendation) === "Deep Dive")
+                    .slice(0, 6);
+  if (!picks.length) {
+    host.appendChild(el("div", { cls: "empty",
+      text: "No top picks yet — they appear here as soon as a search finishes ranking." }));
+    return;
+  }
+  picks.forEach(r => {
+    const why = [];
+    const pos = rankOf(r.percentile, r.cohort_size);
+    why.push(`Ranked ${ord(pos)} of ${r.cohort_size} similar `
+      + `${sectorName(r.sector_label).toLowerCase()} companies`);
+    if (r.tier1 > 0) why.push(`${r.tier1} top-tier investor${r.tier1 > 1 ? "s" : ""} already in`);
+    if (r.last_round_usd) why.push(`last raised ${money(r.last_round_usd)}`);
+    if (r.commentary_count > 0) why.push(`${r.commentary_count} community mentions`);
+    const card = el("div", { cls: "pick" }, [
+      el("div", { cls: "pname", text: r.name }),
+      el("div", {}, [el("span", { cls: "chip", text: sectorName(r.sector_label) })]),
+      el("div", { cls: "pwhy", text: why.join(" · ") + "." }),
+      el("div", { cls: "pfoot" }, [
+        el("button", { cls: "ghost", text: "Why? Show the sources",
+          on: { click: () => openProvenance(r) } }),
+        r.has_brief ? el("button", { cls: "ghost", text: "Read the brief",
+          on: { click: () => openBrief(r) } }) : null,
+        el("span", { cls: "rank-pill",
+          text: r.low_confidence ? "small comparison group" : `#${r.market_rank || "?"} in its area`,
+          title: r.low_confidence
+            ? "Fewer than 20 similar companies to compare against, so treat the rank as a hint"
+            : "Position among similar companies by activity" }),
+      ]),
+    ]);
+    host.appendChild(card);
+  });
+}
+
+function drawPipeline(data) {
+  $("#pipeSub").textContent = `${data.count} companies · click any row to see exactly where `
+    + `its information came from`;
+  const headers = [{ label: "Company" }, { label: "Focus area" }, { label: "Stage" },
+    { label: "Last raise", num: true }, { label: "When" }, { label: "Valuation" },
+    { label: "Lead investor" }, { label: "Top backers", num: true }, { label: "Team size" },
+    { label: "Growth" }, { label: "Rank among peers" }, { label: "Last activity" },
+    { label: "Status" }, { label: "Brief" }, { label: "Source" }];
+  const rows = data.rows.map(r => [
+    { node: el("span", { text: r.name, title: r.description }) },
+    sectorName(r.sector_label), r.stage,
+    r.last_round_usd ? money(r.last_round_usd) : { cls: "gated", text: "not disclosed" },
+    r.last_round_date || "—",
+    r.valuation ? money(r.valuation) : { cls: "gated", text: "needs paid data (PitchBook)" },
+    r.lead_investor || { cls: "gated", text: "not disclosed" },
+    `${r.tier1}`,
+    { cls: "gated", text: "needs paid data (Coresignal)" },
+    { cls: "gated", text: "needs paid data (Coresignal)" },
+    { node: el("span", {
+        text: `#${rankOf(r.percentile, r.cohort_size)} of ${r.cohort_size}`
+            + (r.low_confidence ? " ⚠" : ""),
+        title: r.low_confidence
+          ? `Only ${r.cohort_size} similar companies to compare against — treat as a hint`
+          : `Position among ${r.cohort_size} similar companies at the same stage` }) },
+    r.last_signal || "—",
+    { node: recChip(r.recommendation, r.human_override) },
+    { node: r.has_brief
+        ? el("button", { cls: "ghost", text: "read",
+            on: { click: e => { e.stopPropagation(); openBrief(r); } } })
+        : (window.STATIC_DEMO
+            ? el("span", { cls: "muted", text: "—",
+                title: "creating a brief needs the running engine" })
+            : el("button", { cls: "ghost", text: "create",
+                on: { click: e => { e.stopPropagation(); genBrief(r); } } })) },
+    { node: r.source_url
+        ? el("a", { href: r.source_url, text: "original ↗", attrs: { target: "_blank" } })
+        : el("span", { cls: "muted", text: "—" }) },
+  ]);
+  const t = tableFrom(headers, rows);
+  t.querySelectorAll("tbody tr").forEach((tr, i) => {
+    tr.className = "rowlink";
+    tr.addEventListener("click", () => openProvenance(data.rows[i]));
+  });
+  const host = $("#pipeTable");
+  host.replaceWith(t); t.id = "pipeTable";
+}
+
+function drawPeers(d) {
+  mount2("#peerTable", tableFrom(
+    [{ label: "Investor" }, { label: "Tier", num: true }, { label: "What happened" },
+     { label: "Company / fund" }, { label: "When" }, { label: "Flag" }, { label: "Src" }],
+    d.events.map(e => [e.investor, e.tier ?? "—",
+      e.event_type === "fund_formation" ? "raised a new fund" : "made an investment",
+      e.company || "—",
+      (e.observed_at || "").slice(0, 10),
+      e.is_thesis_shift ? "⚠ outside their usual focus" : "",
+      { node: e.url ? el("a", { href: e.url, text: "↗", attrs: { target: "_blank" } })
+                    : el("span", { cls: "muted", text: "—" }) }])),
+    "No tracked-investor activity yet.");
+  mount2("#heatTable", tableFrom(
+    [{ label: "Firm A" }, { label: "Firm B" }, { label: "Deals together", num: true },
+     { label: "Companies" }],
+    d.heatmap.map(h => [h.a, h.b, h.n, h.companies])),
+    "No repeat pairings seen yet in free sources — this fills in fast with a paid "
+    + "database subscription.");
+}
+
+function drawCommentary(d) {
+  mount2("#commTable", tableFrom(
+    [{ label: "Company" }, { label: "Where" }, { label: "Mood" },
+     { label: "Quote" }, { label: "When" }, { label: "Src" }],
+    d.rows.map(c => [c.company || "(general)", c.platform, c.sentiment || "—",
+      (c.quote || "").slice(0, 180),
+      (c.observed_at || "").slice(0, 10),
+      { node: c.url ? el("a", { href: c.url, text: "↗", attrs: { target: "_blank" } })
+                    : el("span", { cls: "muted", text: "—" }) }])),
+    "No community chatter captured yet — it appears as pipeline companies get discussed "
+    + "on Hacker News and Reddit.");
+}
+
+function drawNews(d) {
+  mount2("#newsTable", tableFrom(
+    [{ label: "Headline" }, { label: "From" }, { label: "Why it matters here" },
+     { label: "When" }],
+    d.rows.map(n => [
+      { node: n.url ? el("a", { href: n.url, text: n.title, attrs: { target: "_blank" } })
+                    : el("span", { text: n.title }) },
+      n.source, n.why_it_matters, (n.published_at || "").slice(0, 10)])),
+    "Nothing has met the bar yet — this list stays short on purpose.");
+}
+
+function drawStale(d) {
+  mount2("#staleTable", tableFrom(
+    [{ label: "Company" }, { label: "Focus area" }, { label: "Quiet for", num: true },
+     { label: "Last seen" }, { label: "What happens" }],
+    d.rows.map(r => [
+      r.is_synthetic ? r.name + "  (example record)" : r.name,
+      r.sector || "—", r.days_quiet + " days", (r.last_signal_at || "").slice(0, 10),
+      { cls: "stale-note", text: "waiting for a partner to decide — never auto-removed" }])),
+    `Nothing has gone quiet: every company has shown activity within ${d.stale_days} days.`);
+}
+
+function drawSources(sources) {
+  const statusChip = s => {
+    const map = { ok: ["--good", "✔", "working"], degraded: ["--serious", "▲", "having trouble"],
+      down: ["--critical", "✖", "down"], unknown: ["--muted", "•", "not yet run"],
+      license_required: ["--muted", "🔒", "needs paid subscription"] };
+    const [tok, ic, label] = map[s.health] || map.unknown;
+    const c = el("span", { cls: "chip" });
+    const dot = el("span", { cls: "ic", text: ic });
+    dot.style.color = css(tok);
+    c.append(dot, document.createTextNode(" " + label));
+    return c;
+  };
+  mount2("#srcTable", tableFrom(
+    [{ label: "Source" }, { label: "Status" }, { label: "Items", num: true },
+     { label: "Last check" }, { label: "Access" }, { label: "What it would add" }],
+    sources.map(s => [s.name.replaceAll("_", " "), { node: statusChip(s) }, s.signals,
+      (s.last_ok_at || "").slice(0, 16).replace("T", " ") || "—",
+      s.requires_license
+        ? `paid — ${s.license_vendor}${s.env_key ? " · set " + s.env_key : ""}`
+        : "free — already on",
+      s.unlocks || (s.requires_license ? "—" : "in use now")])),
+    "No sources registered.");
+}
+
+/* ------------------------------------------------------------------- drawers */
+const drawer = $("#drawer");
+function openDrawer(title, node) {
+  $("#drawerTitle").textContent = title;
+  const b = $("#drawerBody"); b.textContent = ""; b.appendChild(node);
+  drawer.classList.add("open"); drawer.setAttribute("aria-hidden", "false");
+}
+$("#drawerClose").onclick = () => {
+  drawer.classList.remove("open"); drawer.setAttribute("aria-hidden", "true");
+};
+document.addEventListener("keydown", e => { if (e.key === "Escape") $("#drawerClose").click(); });
+
+async function openBrief(r) {
+  const res = await fetch(`/api/brief/${r.id}/raw`);
+  if (!res.ok) { openDrawer(r.name, el("div", { cls: "empty", text: "No brief yet." })); return; }
+  const d = await res.json();
+  openDrawer(`${r.name} — one-page brief`, el("div", {}, [
+    el("div", { cls: "csub", text: `written ${(d.generated_at || "").slice(0, 16).replace("T", " ")}`
+      + ` · every number in it links back to a stored source` }),
+    el("pre", { text: d.content_md })]));
+}
+async function genBrief(r) {
+  openDrawer(`${r.name} — brief`, el("div", { cls: "empty", text: "Writing the brief…" }));
+  const res = await fetch(`/api/brief/${r.id}/generate`, { method: "POST" });
+  if (!res.ok) {
+    const j = await res.json().catch(() => ({}));
+    openDrawer(`${r.name} — brief`, el("div", { cls: "empty",
+      text: j.detail || "The draft contained a number without a source, so it was rejected "
+        + "rather than published. It has been flagged for review." }));
+    return;
+  }
+  await openBrief(r); loadAll();
+}
+async function openProvenance(r) {
+  const res = await fetch(`/api/provenance/${r.id}`);
+  const d = await res.json();
+  const body = el("div");
+  body.appendChild(el("div", { cls: "csub",
+    text: `${r.sector_label} · stage: ${r.stage} · ranked against ${r.cohort_size} similar `
+        + `companies` }));
+  const dec = el("div", { cls: "filters", attrs: { style: "margin:12px 0" } });
+  if (window.STATIC_DEMO) {
+    dec.appendChild(el("span", { cls: "muted",
+      text: "This is a snapshot — recording a decision needs the running engine." }));
+  } else {
+    dec.appendChild(el("span", { cls: "muted", text: "Your call on this company:" }));
+    [["Pass", "Not a fit"], ["Watch", "Watch it"], ["Deep Dive", "Top pick"]]
+      .forEach(([a, label]) => dec.appendChild(el("button", {
+      text: label, cls: r.recommendation === a ? "primary" : "",
+      on: { click: async () => {
+        await fetch(`/api/decision?company_id=${r.id}&action=${encodeURIComponent(a)}`,
+          { method: "POST" });
+        openDrawer(r.name, el("div", { cls: "empty",
+          text: `Saved: "${label}". Your decision always wins over the tool's — it's `
+              + `remembered, and the tool learns from it.` }));
+        loadAll();
+      } } })));
+  }
+  body.appendChild(dec);
+  body.appendChild(el("h3", { text: "Every piece of information we have, with its source",
+    attrs: { style: "font-size:13px;margin:14px 0 4px" } }));
+  body.appendChild(tableFrom(
+    [{ label: "Type" }, { label: "Seen" }, { label: "Collected" }, { label: "How" },
+     { label: "From" }, { label: "Link" }],
+    d.signals.map(s => [s.kind.replaceAll("_", " "), (s.observed_at || "").slice(0, 10),
+      (s.fetched_at || "").slice(0, 10),
+      s.fetch_mode === "live" ? "fetched live" : "saved copy", s.source.replaceAll("_", " "),
+      { node: s.url ? el("a", { href: s.url, text: "open ↗", attrs: { target: "_blank" } })
+                    : el("span", { cls: "muted", text: "—" }) }])));
+  body.appendChild(el("h3", { text: "Extra details we looked for",
+    attrs: { style: "font-size:13px;margin:16px 0 4px" } }));
+  body.appendChild(tableFrom(
+    [{ label: "Detail" }, { label: "What we found" }, { label: "From" }],
+    d.enrichment.map(e => [e.field.replaceAll("_", " "),
+      e.value_json && e.value_json !== "null" ? e.value_json
+        : { cls: "gated", text: (e.unavailable_reason || "unavailable")
+              .replace("requires", "needs paid data:") },
+      e.source])));
+  if (d.score) {
+    body.appendChild(el("h3", { text: "How the ranking was computed",
+      attrs: { style: "font-size:13px;margin:16px 0 4px" } }));
+    body.appendChild(el("div", { cls: "csub",
+      text: `Every score keeps its full recipe (version ${d.score.model_version}), so any `
+          + `ranking can be re-checked later. The raw details below are for the curious:` }));
+    body.appendChild(el("pre", { text: JSON.stringify(JSON.parse(d.score.features_json), null, 2) }));
+  }
+  openDrawer(`${r.name} — where this comes from`, body);
+}
+
+/* --------------------------------------------------------------------- wiring */
+document.querySelectorAll("[data-toggle]").forEach(b => b.onclick = () => {
+  const id = b.dataset.toggle;
+  const chart = $("#" + id), table = $("#" + id + "Table");
+  const showTable = chart.hidden === false;
+  chart.hidden = showTable; table.hidden = !showTable;
+  b.textContent = showTable ? "Show as chart" : "Show as table";
+});
+
+$("#themeBtn").onclick = () => {
+  const cur = document.documentElement.getAttribute("data-theme");
+  const next = cur === "dark" ? "light" : cur === "light" ? "dark"
+    : (matchMedia("(prefers-color-scheme: dark)").matches ? "light" : "dark");
+  document.documentElement.setAttribute("data-theme", next);
+  loadAll();
+};
+
+$("#chatGo").onclick = async () => {
+  const q = $("#chatQ").value.trim(); if (!q) return;
+  const a = $("#chatA"); a.hidden = false; a.textContent = "Looking through everything collected…";
+  const r = await fetch("/api/chat?q=" + encodeURIComponent(q));
+  const d = await r.json().catch(() => ({ answer: "Something went wrong — try again." }));
+  a.textContent = d.answer || d.detail || "No answer.";
+};
+$("#chatQ").addEventListener("keydown", e => { if (e.key === "Enter") $("#chatGo").click(); });
+[["what are the best deals in defence tech right now?", "best defence deals"],
+ ["summarise what people are saying about Pangram", "what people say"],
+ ["who's quietly investing in robotics?", "quiet investors"],
+ ["what are the emerging sub-sectors?", "early trends"]].forEach(([q, label]) => {
+  $("#chatExamples").appendChild(el("button", { cls: "ghost", text: "try: " + label,
+    on: { click: () => { $("#chatQ").value = q; $("#chatGo").click(); } } }));
+});
+
+$("#scanGo").onclick = async () => {
+  const q = $("#scanQ").value.trim(); if (!q) return;
+  const a = $("#scanA"); a.hidden = false; a.textContent = "Searching what we've collected…";
+  const r = await fetch("/api/scan?thesis_text=" + encodeURIComponent(q));
+  const d = await r.json().catch(() => ({ results: [] }));
+  a.textContent = "";
+  if (!d.results || !d.results.length) {
+    a.textContent = "Search finished — nothing in the pipeline matches that idea yet. "
+      + "The tool won't invent matches; try different words, or check back after the "
+      + "next collection run.";
+    return;
+  }
+  a.appendChild(el("div", { cls: "muted",
+    text: `✓ Search finished — ${d.results.length} match(es), best first:`,
+    attrs: { style: "margin-bottom:6px" } }));
+  a.appendChild(tableFrom([{ label: "#", num: true }, { label: "Company" },
+    { label: "Focus area" }, { label: "Match strength", num: true }],
+    d.results.map((x, i) => [i + 1, x.company, x.sector || "—",
+      (x.relevance ?? 0).toFixed(1)])));
+};
+$("#scanQ").addEventListener("keydown", e => { if (e.key === "Enter") $("#scanGo").click(); });
+
+$("#btnRefresh").onclick = async () => {
+  const b = $("#btnRefresh"); b.disabled = true; b.textContent = "Starting…";
+  const r = await fetch("/api/refresh?full=true", { method: "POST" });
+  if (r.status === 409) toast("A search is already running — its steps are shown above.");
+  else toast("🔍 Search started — watch each step live in the panel above.");
+  setTimeout(loadAll, 1200);   // renderStatus shows the step panel + re-enables at the end
+};
+
+$("#btnLlmTest").onclick = async () => {
+  const b = $("#btnLlmTest"); b.disabled = true; b.textContent = "Testing…";
+  let d = {};
+  try { d = await (await fetch("/api/llm/test", { method: "POST" })).json(); }
+  catch (e) { d = { ok: false, reason: "the engine did not respond" }; }
+  if (d.ok) {
+    b.textContent = "AI working ✔";
+    toast(`AI connection works — ${d.model} replied in ${d.seconds}s. New searches will `
+      + "include the written analysis.");
+  } else {
+    b.textContent = "AI not working ✕";
+    toast("AI is not working: " + (d.reason || "unknown") +
+      (d.provider_message ? " — provider said: " + d.provider_message : ""));
+  }
+  setTimeout(() => { b.disabled = false; b.textContent = "🤖 Test AI connection";
+    loadAll(); }, 9000);
+};
+
+$("#btnStop").onclick = async () => {
+  const b = $("#btnStop"); b.disabled = true; b.textContent = "Stopping…";
+  const r = await fetch("/api/run/cancel", { method: "POST" });
+  toast(r.ok ? "Stopping — the search will finish its current step and keep whatever it "
+             + "has already collected."
+             : "Nothing is running at the moment.");
+  setTimeout(() => { b.disabled = false; b.textContent = "■ Stop this search"; }, 6000);
+};
+
+$("#btnDigest").onclick = async () => {
+  const b = $("#btnDigest"); b.disabled = true; b.textContent = "Preparing…";
+  const r = await fetch("/api/digest/send", { method: "POST" });
+  const d = await r.json().catch(() => ({}));
+  if (!d.started && !d.ok) {
+    b.textContent = "Unavailable"; setTimeout(() => {
+      b.disabled = false; b.textContent = "✉️ Email me the summary"; }, 5000);
+    return;
+  }
+  const poll = async () => {
+    const st = await (await fetch("/api/digest/status")).json().catch(() => null);
+    if (!st || st.running || !st.last) { setTimeout(poll, 5000); return; }
+    if (st.last.delivered) { b.textContent = "Sent ✔ — check your inbox"; }
+    else { b.textContent = "Saved (not emailed)";
+      toast("The summary was written but not emailed: " + (st.last.detail ||
+        "no recipient configured") + ". It's saved on the server."); }
+    setTimeout(() => { b.disabled = false;
+      b.textContent = "✉️ Email me the summary"; loadAll(); }, 8000);
+  };
+  b.textContent = "Writing & sending (1–2 min)…";
+  setTimeout(poll, 5000);
+};
+
+["#fStatus", "#fSector"].forEach(s => $(s).addEventListener("change", loadPipeline));
+$("#fQ").addEventListener("input", () => { clearTimeout(window._qt);
+  window._qt = setTimeout(loadPipeline, 250); });
+
+/* ----------------------------------------------------------------- load data */
+let _lastPipeline = { count: 0, rows: [] };
+async function loadPipeline() {
+  const p = new URLSearchParams({ status: $("#fStatus").value,
+    sector: $("#fSector").value, q: $("#fQ").value });
+  const host = $("#pipeTable"); host.style.opacity = "0.55";   // hold frame on refetch
+  const d = await (await fetch("/api/pipeline?" + p)).json();
+  drawPipeline(d);
+  $("#pipeTable").style.opacity = "1";
+  return d;
+}
+
+function kpi(label, value, foot) {
+  return el("div", { cls: "tile" }, [
+    el("div", { cls: "label", text: label }),
+    el("div", { cls: "value", text: value }),
+    el("div", { cls: "foot", text: foot || "" })]);
+}
+
+/* search status strip + live step checklist + completion toast */
+let _wasRunning = null;
+const fmtMins = s => s >= 90 ? `about ${Math.round(s / 60)} minutes`
+  : s >= 45 ? "about a minute" : `about ${Math.max(5, Math.round(s / 5) * 5)} seconds`;
+
+function renderSteps(run) {
+  const list = $("#stepList"); list.textContent = "";
+  run.steps.forEach(st => {
+    const row = el("div", { attrs: { style: "display:flex; gap:7px; align-items:baseline" } });
+    const mark = st.status === "done" ? "✓" : st.status === "running" ? "▶"
+      : st.status === "failed" ? "✕" : "○";
+    const mk = el("span", { text: mark });
+    mk.style.color = st.status === "done" ? css("--good")
+      : st.status === "running" ? css("--series-1")
+      : st.status === "failed" ? css("--serious") : css("--muted");
+    row.appendChild(mk);
+    const lbl = el("span", { text: st.label });
+    if (st.status === "pending") lbl.style.color = css("--muted");
+    if (st.status === "running") lbl.style.fontWeight = "640";
+    row.appendChild(lbl);
+    const extra = st.status === "running" && st.detail ? st.detail
+      : st.status === "done" ? (st.detail ? st.detail : "") + (st.seconds ? ` · ${Math.round(st.seconds)}s` : "")
+      : st.status === "failed" ? "had trouble — the search continues"
+      : st.status === "skipped" ? "not run — search was stopped" : "";
+    if (extra) row.appendChild(el("span", { cls: "muted",
+      text: " — " + String(extra).slice(0, 60) }));
+    list.appendChild(row);
+  });
+  $("#etaLine").textContent = run.eta_seconds_remaining
+    ? `⏱ ${fmtMins(run.eta_seconds_remaining)} left — ${run.eta_basis}.`
+    : "Finishing up…";
+}
+
+let _planCache = null;
+async function loadPlan() {
+  try { _planCache = _planCache || await (await fetch("/api/run/plan")).json(); }
+  catch (e) { return; }
+  const p = _planCache; if (!p || !p.steps) return;
+  $("#planSummary").textContent = `${p.source_count} public sources, `
+    + `${p.steps.length} steps in total — takes ${fmtMins(p.total_seconds_estimate)} `
+    + `(${p.basis}). ${p.licensed_sources.length} more sources need paid licences and are `
+    + `switched off.`;
+  const list = $("#planList"); list.textContent = "";
+  p.steps.forEach((st, i) => {
+    const row = el("div", { attrs: { style: "display:flex; gap:7px; align-items:baseline" } });
+    row.appendChild(el("span", { cls: "muted", text: (i + 1) + "." }));
+    const lbl = el("span", { text: st.label });
+    if (st.is_source) lbl.style.fontWeight = "600";
+    row.appendChild(lbl);
+    if (st.seconds_estimate >= 1) row.appendChild(el("span", { cls: "muted",
+      text: ` — usually ${Math.round(st.seconds_estimate)}s` }));   // "0s" reads as broken
+    list.appendChild(row);
+  });
+}
+$("#planToggle").onclick = () => {
+  const l = $("#planList"), open = l.hidden;
+  l.hidden = !open;
+  $("#planToggle").textContent = open ? "hide steps" : "show all steps";
+};
+
+async function pollRun() {
+  if (window.STATIC_DEMO) return;
+  let cur = null;
+  try { cur = await (await fetch("/api/run/current")).json(); } catch (e) { cur = null; }
+  const running = !!(cur && cur.running);
+  $("#stepPanel").hidden = !running;
+  $("#planPanel").hidden = running;      // the live checklist replaces the preview
+  if (running) {
+    renderSteps(cur.run);
+    clearTimeout(window._runPoll);
+    window._runPoll = setTimeout(pollRun, 4000);
+  } else if (_wasRunning === true) {
+    loadAll();   // just finished — refresh everything (fires the toast)
+  }
+}
+
+function renderStatus(s) {
+  const dot = $("#statusDot"), title = $("#statusTitle"), sub = $("#statusSub");
+  const running = !!(s.job && s.job.running);
+  const manual = (s.search_mode || "manual") !== "auto";
+  const rb = $("#btnRefresh");
+  if (rb && !window.STATIC_DEMO) {
+    rb.disabled = running;
+    rb.textContent = running ? "Searching…" : "🔍 Search for new deals";
+  }
+  if (running) {
+    dot.className = "dot live";
+    title.textContent = "Searching the market now…";
+    sub.textContent = "Each step shows below as it happens. You can keep browsing — "
+      + "this page updates itself and will announce when the search is complete.";
+    pollRun();
+  } else {
+    $("#stepPanel").hidden = true;
+    dot.className = "dot done";
+    const picks = s.recommendations["Deep Dive"] || 0;
+    const last = s.job && s.job.last;
+    title.textContent = last ? "✓ Search complete — everything below is up to date"
+                             : "Ready when you are";
+    sub.textContent = (last && last.finished
+        ? `Last search: ${last.finished.replace("T", " ").replace("Z", " UTC")}` +
+          (last.seconds ? ` (took ${Math.round(last.seconds)}s)` : "") + ". "
+        : "No search has run yet. ") +
+      `${picks} top pick${picks === 1 ? "" : "s"} right now. ` +
+      (manual ? "Nothing runs by itself — searches happen only when you press the button."
+              : "The tool also re-searches by itself every hour.");
+  }
+  if (_wasRunning === true && !running) {
+    const st = (s.job && s.job.last && s.job.last.stats) || {};
+    toast(`✓ Search complete — ${st.companies ?? "?"} companies, `
+      + `${st.top_picks ?? s.recommendations["Deep Dive"] ?? 0} top picks`
+      + (st.new_companies ? `, ${st.new_companies} seen for the first time` : "")
+      + ". Everything on this page is refreshed, and this search is saved in history.");
+  }
+  _wasRunning = running;
+}
+
+/* previous searches */
+function drawRuns(runs) {
+  mount2("#runsTable", tableFrom(
+    [{ label: "When" }, { label: "Started by" }, { label: "Took", num: true },
+     { label: "Companies", num: true }, { label: "Top picks", num: true },
+     { label: "New finds", num: true }, { label: "Result" }, { label: "" }],
+    runs.map(r => [
+      (r.started_at || "").replace("T", " ").replace("Z", " UTC"),
+      r.trigger_by === "manual" ? "you (button)" : r.trigger_by,
+      r.seconds ? Math.round(r.seconds) + "s" : "—",
+      r.stats ? r.stats.companies : "—",
+      r.stats ? r.stats.top_picks : "—",
+      r.stats ? r.stats.new_companies : "—",
+      r.status === "done" ? "✓ completed"
+        : r.status === "cancelled" ? "■ stopped by you"
+        : "✕ " + (r.error || "failed"),
+      { node: el("button", { cls: "ghost", text: "view deals",
+          on: { click: () => openRun(r.id) } }) }])),
+    "No searches yet — press “Search for new deals” to run the first one.");
+}
+
+async function openRun(runId) {
+  const d = await (await fetch(`/api/runs/${runId}`)).json();
+  const body = el("div");
+  body.appendChild(el("div", { cls: "csub",
+    text: `Ran ${(d.started_at || "").replace("T", " ").replace("Z", " UTC")} · took `
+        + `${Math.round(d.seconds || 0)}s · started by ${d.trigger_by}. This is exactly `
+        + `what that search showed — it never changes, even as new searches re-rank.` }));
+  const diff = d.diff_vs_previous;
+  if (diff && (diff.new_top_picks.length || diff.dropped_top_picks.length)) {
+    const box = el("div", { cls: "warnbox" });
+    if (diff.new_top_picks.length) box.appendChild(el("div",
+      { text: "↑ New top picks vs the search before: " + diff.new_top_picks.join(", ") }));
+    if (diff.dropped_top_picks.length) box.appendChild(el("div",
+      { text: "↓ No longer top picks: " + diff.dropped_top_picks.join(", ") }));
+    body.appendChild(box);
+  }
+  const results = (d.results || []);
+  const order = { "Deep Dive": 0, "Watch": 1, "Pass": 2 };
+  results.sort((a, b) => (order[a.recommendation] ?? 3) - (order[b.recommendation] ?? 3)
+    || (b.percentile || 0) - (a.percentile || 0));
+  body.appendChild(tableFrom(
+    [{ label: "Company" }, { label: "Focus area" }, { label: "Rank", num: true },
+     { label: "Status" }, { label: "" }],
+    results.map(r => [
+      r.name, sectorName(r.sector),
+      `#${r.rank_in_cohort} of ${r.cohort_size}`,
+      { node: recChip(r.recommendation) },
+      r.is_new ? { node: el("span", { cls: "chip", text: "🆕 first time seen" }) } : ""])));
+  openDrawer(`Search #${d.id} — what it found`, body);
+}
+
+async function loadAll() {
+  let s;
+  try {
+    const res = await fetch("/api/summary");
+    if (!res.ok) throw new Error("HTTP " + res.status);
+    s = await res.json();
+  } catch (e) {
+    const warn = $("#postureWarn"); warn.textContent = "";
+    const box = el("div", { cls: "warnbox" });
+    box.appendChild(el("div", { text: "⏳ Waking the engine up — free hosting naps when "
+      + "nobody is looking, and the first visit takes up to a minute. This page will "
+      + "load by itself; no need to refresh." }));
+    warn.appendChild(box);
+    $("#statusTitle").textContent = "Waking up…";
+    $("#statusSub").textContent = "Hold on — usually under a minute.";
+    clearTimeout(window._wake); window._wake = setTimeout(loadAll, 8000);
+    return;
+  }
+  $("#hdrSub") && ($("#hdrSub").textContent = "");
+  renderStatus(s);
+  loadPlan();
+
+  // plain-language posture notes — never let a limitation be invisible
+  const warn = $("#postureWarn"); warn.textContent = "";
+  const notes = [];
+  if (s.llm.stubbed) notes.push("AI-written analysis is switched off (no AI key is set up), "
+    + "so those fields show a clear placeholder instead of made-up text. All numbers, "
+    + "rankings and sources still work.");
+  else if (s.llm.last_error) notes.push("The AI key is set, but the last request to the AI "
+    + "provider failed, so those fields show a placeholder instead of made-up text: "
+    + (s.llm.last_error.hint || "") + " (provider said: "
+    + String(s.llm.last_error.message || "").slice(0, 140) + "). Press “Test AI connection” "
+    + "to check again.");
+  if (!s.email.configured || !(s.email.to || []).length)
+    notes.push("Email summaries aren't being delivered yet (" + (s.email.reason ||
+      "no recipient set") + ") — they're saved as files instead.");
+  if (!s.sheets.configured) notes.push("The shared Google Sheet isn't connected — the "
+    + "Excel download above is the master copy.");
+  if (s.storage && s.storage.error) notes.push("The permanent database could not be "
+    + "reached, so results are being kept in a temporary file that resets when the "
+    + "service restarts. Reason: " + s.storage.error + " (see SUPABASE.md to fix it).");
+  else if (s.storage && !s.storage.durable) notes.push("Results are stored in a local file. "
+    + "On free hosting that file resets on restarts — connect the Supabase database "
+    + "(see SUPABASE.md in the repo) to keep every search's history permanently.");
+  if (notes.length) {
+    const box = el("div", { cls: "warnbox" });
+    notes.forEach(n => box.appendChild(el("div", { text: "• " + n })));
+    warn.appendChild(box);
+  }
+
+  const k = $("#kpis"); k.textContent = "";
+  const f = Object.fromEntries(s.funnel.map(x => [x.stage, x.value]));
+  k.append(
+    kpi("Top picks", s.recommendations["Deep Dive"] || 0, "worth a close look now"),
+    kpi("Companies tracked", (f["Companies resolved"] || 0).toLocaleString(),
+        "found across all sources"),
+    kpi("Info collected", (f["Raw signals ingested"] || 0).toLocaleString(),
+        "filings, articles, posts — each kept with its link"),
+    kpi("Noise removed", s.signals_filtered_pct + "%",
+        "filtered out before any expensive analysis"),
+    kpi("Briefs written", s.briefs, "one-pagers, every number sourced"),
+    kpi("Watching", s.recommendations["Watch"] || 0, "not ready yet, kept an eye on"));
+
+  const hc = $("#healthChip"); hc.textContent = "";
+  const bad = s.sources.filter(x => !x.requires_license
+    && (x.health === "degraded" || x.health === "down"));
+  const chip = el("span", { cls: "chip" });
+  const ic = el("span", { cls: "ic", text: bad.length ? "▲" : "✔" });
+  ic.style.color = css(bad.length ? "--serious" : "--good");
+  chip.append(ic, document.createTextNode(bad.length
+    ? ` ${bad.length} data source(s) having trouble` : " all data sources working"));
+  hc.appendChild(chip);
+
+  drawFunnel(s.funnel);
+  drawRecMix(s.recommendations);
+  drawSources(s.sources);
+
+  const sec = await (await fetch("/api/sectors")).json();
+  drawSectors(sec.rows);
+
+  const d = await loadPipeline();
+  _lastPipeline = d;
+  drawTopPicks(d.rows);
+  const sectors = [...new Set(d.rows.map(r => r.sector))].sort();
+  const sel = $("#fSector"), cur = sel.value;
+  sel.textContent = "";
+  sel.appendChild(el("option", { text: "All", attrs: { value: "all" } }));
+  sectors.forEach(x => sel.appendChild(el("option", { text: x, attrs: { value: x } })));
+  sel.value = cur && [...sel.options].some(o => o.value === cur) ? cur : "all";
+
+  drawPeers(await (await fetch("/api/peers")).json());
+  drawCommentary(await (await fetch("/api/commentary")).json());
+  drawNews(await (await fetch("/api/news")).json());
+  drawStale(await (await fetch("/api/stale")).json());
+  try {
+    drawRuns((await (await fetch("/api/runs")).json()).runs || []);
+  } catch (e) { drawRuns([]); }
+}
+
+addEventListener("resize", () => { clearTimeout(window._rt);
+  window._rt = setTimeout(loadAll, 300); });
+loadAll();
+setInterval(loadAll, 120000);
+</script>
+</body>
+</html>

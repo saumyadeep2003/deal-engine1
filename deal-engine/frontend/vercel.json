@@ -1,0 +1,23 @@
+{
+  "rewrites": [
+    {
+      "source": "/api/:path*",
+      "destination": "https://deal-engine-dsnp.onrender.com/api/:path*"
+    },
+    {
+      "source": "/healthz",
+      "destination": "https://deal-engine-dsnp.onrender.com/healthz"
+    }
+  ],
+  "headers": [
+    {
+      "source": "/(.*)",
+      "headers": [
+        {
+          "key": "X-Robots-Tag",
+          "value": "noindex"
+        }
+      ]
+    }
+  ]
+}

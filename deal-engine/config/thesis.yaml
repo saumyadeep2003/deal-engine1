@@ -1,0 +1,247 @@
+# Thirdbase / 535 West Capital — investment thesis as configuration.
+# Partners edit this file; no Python required.
+
+fund:
+  name: "Thirdbase / 535 West Capital"
+  focus_split:            # applied as a portfolio constraint at the ranking layer
+    dominant_tech: 0.60
+    tactical: 0.40
+  growth_yoy_target: 0.40 # 40%+ YoY for growth stage
+  runway_target_years: 3
+  tier1_target_count: [3, 4]
+  tam_floor_usd: 1000000000
+  exit_horizon_years: [3, 5]
+  meta_thesis: "proprietary data moat + regulatory complexity + large addressable labor cost"
+
+themes:
+  - key: ai_infrastructure
+    label: "AI Infrastructure & Compute Stack"
+    keywords: [training infrastructure, synthetic data, RL environment, model eval, evals, inference optimization, small language model, SLM, edge inference, vector database, multimodal pipeline, data governance, data center, datacenter, GPU, accelerator, energy]
+  - key: cybersecurity
+    label: "Cybersecurity"
+    keywords: [identity security, AI agent security, agent identity, cloud security, critical infrastructure, supply chain security, SOC, threat detection, zero trust, vulnerability]
+  - key: defence_tech
+    label: "Defence Tech"
+    keywords: [autonomous systems, cyber defense, satellite, space, spacetech, counter-UAS, drone swarm, C4ISR, battlefield, defense, defence, dual-use, ISR, munitions]
+  - key: robotics
+    label: "Robotics & Physical AI"
+    keywords: [robotics, robot, humanoid, industrial automation, logistics automation, fulfillment, robotic simulation, manipulation, embodied AI, physical AI]
+  - key: energy
+    label: "Energy-as-a-service"
+    keywords: [nuclear, SMR, modular reactor, grid, demand response, energy storage, power infrastructure, geothermal, fusion]
+  - key: ai_native_stack
+    label: "AI-native stack"
+    keywords: [GPU cloud, inference infrastructure, alternative compute, fine-tuning, orchestration, developer tooling, agent framework, LLM tooling, edge AI, data infrastructure, MLOps]
+  - key: ai_manufacturing
+    label: "AI in manufacturing / AI copilots"
+    keywords: [AI copilot, sales AI, legal AI, finance AI, manufacturing AI, industrial AI, factory, SaaS replacement, workflow automation]
+  - key: voice_multimodal
+    label: "Voice, Audio & Multimodal AI"
+    keywords: [voice synthesis, text-to-speech, speech recognition, real-time audio, low-latency speech, conversational AI, ambient interface, multimodal model, voice agent, audio AI]
+  - key: fintech
+    label: "Fintech & Financial Infrastructure"
+    keywords: [neobank, banking infrastructure, FX, crypto infrastructure, digital assets, embedded finance, banking-as-a-service, brokerage, trading infrastructure, regtech, wealth management, payments, stablecoin]
+  - key: materials
+    label: "Materials Science & Advanced Manufacturing"
+    keywords: [materials discovery, advanced materials, semiconductor materials, industrial chemicals, process materials, additive manufacturing, battery chemistry]
+  - key: biotech_health
+    label: "BioTech & Health AI"
+    keywords: [drug discovery, molecular, genomics, medical imaging, clinical trial, clinical documentation, protein, biotech, health AI, diagnostics]
+
+# Themes counted as "dominant tech" for the 60/40 portfolio split
+dominant_tech_themes: [ai_infrastructure, ai_native_stack, robotics, defence_tech, cybersecurity, voice_multimodal]
+
+investor_tiers:
+  tier1:
+    - Andreessen Horowitz
+    - Sequoia Capital
+    - Lux Capital
+    - Conviction
+    - Gradient Ventures
+    - Ribbit Capital
+    - Shield Capital
+    - 8VC
+    - Silver Lake
+    - Thrive Capital
+    - Redpoint
+    - Altimeter Capital
+    - Coatue Management
+    - Tiger Global
+    - IVP
+    - Haystack
+    - Initialized Capital
+    - Felicis Ventures
+    - Y Combinator
+    - Benchmark
+    - Bessemer Venture Partners
+    - Insight Partners
+    - GV
+    - NEA
+    - Kleiner Perkins
+    - Accel
+    - General Catalyst
+    - Khosla Ventures
+    - Founders Fund
+    - Spark Capital
+    - Union Square Ventures
+    - 137 Ventures
+    - 1752vc
+    - Antler
+    - Kindred Ventures
+    - Basis Set Ventures
+    - Dragonfly
+    - Scout Ventures
+    - 2048 Ventures
+    - Peak XV Partners
+    - Obvious Ventures
+    - Primary Venture Partners
+    - Voyager Ventures
+    - Entrepreneurs First
+    - Lightspeed
+    - Picus Capital
+    - Seraphim Space
+    - Samaipata
+    - SlateVC
+    - NFX
+    - b2venture
+    - Social Leverage
+    - Layer Global
+    - Breakout Ventures
+    - Rosberg Ventures
+    - CAVU Consumer Partners
+    - CoFound
+    - Santé Ventures
+    - Quantonation Ventures
+    - StageOne Ventures
+    # Named in the brief's peer set (§3c) alongside the firms above.
+    - Index Ventures
+  # Tier 2/3: configurable seed split (the brief requires all three counts).
+  # These are recognisable active firms one notch outside the fund's Tier 1 list — edit freely.
+  tier2:
+    - First Round Capital
+    - Craft Ventures
+    - Greylock
+    - Menlo Ventures
+    - CRV
+    - Battery Ventures
+    - Two Sigma Ventures
+    - Wing Venture Capital
+    - Uncork Capital
+    - Boldstart Ventures
+    - Amplify Partners
+    - Costanoa Ventures
+    - Eniac Ventures
+    - Bloomberg Beta
+    - Point72 Ventures
+    - M12
+    - Salesforce Ventures
+    - Sapphire Ventures
+    - Norwest Venture Partners
+  tier3:
+    - Alumni Ventures
+    - Techstars
+    - 500 Global
+    - SOSV
+    - Plug and Play
+    - Hustle Fund
+    - Right Side Capital
+    - Gaingels
+    - FJ Labs
+    - Liquid 2 Ventures
+
+# Stated focus per firm used for thesis-shift detection.
+# Only firms listed here are checked; distribution is otherwise derived from observed investments.
+stated_focus:
+  "Shield Capital": [defence_tech, cybersecurity]
+  "Seraphim Space": [defence_tech]
+  "Quantonation Ventures": [ai_infrastructure, materials]
+  "Ribbit Capital": [fintech]
+  "Dragonfly": [fintech]
+  "Breakout Ventures": [biotech_health, materials]
+  "Santé Ventures": [biotech_health]
+  "Voyager Ventures": [energy]
+
+gp_watchlist_x_handles: [mollysoshea, arfurrock, deedydas, ramtinnaimi, alexklein0x, eladgil,
+  everettrandle, theinformation, rick_gerson, davidgeorge83, elizabethturner, jayagup10,
+  anjneymidha, chetanp, andrew__reed, rabois, colossusmag, davidsenra, uncapped_pod, dhaber,
+  guptark22, mark_goldberg_, varungupta, zebulgar, kevinhartz, thulme, kwharrison13, nikunj,
+  adityaag, milesgrimshaw, shaunmmaguire, altcap, martin_casado, billackman, loganbartlett,
+  wizlikewizard, gavinsbaker, jaminball, sarahdingwang, saranormous, tbpn, traestephens, wolfejosh,
+  george_kurtz, jasonlk, chamath, davidsacks, elonmusk, bgurley, csertoglu, rex_woodbury,
+  ericnewcomer, ianrountree, vkhosla, pmarca, paulg, sama, patrickc, tobi, aswathdamodaran,
+  morganhousel, byrnehobart, mariogabriele, howardlindzon, kauffmanfellows, beezer232,
+  alexrkonrad, danprimack, katie_roof, semil, hunterwalk, packym]
+
+# Founders whose next company triggers an immediate alert.
+# Seed examples; partners edit. Matching is on name within ingested signals.
+watched_founders:
+  - "Mira Murati"
+  - "Noam Shazeer"
+  - "Aravind Srinivas"
+  - "John Schulman"
+  - "Barret Zoph"
+
+# Frontier labs — brief §2(b) names "hiring patterns at frontier labs" and
+# "founder migration patterns" as trend inputs. A departure from one of these,
+# or a founder described as an alum of one, is a leading talent-flow signal.
+frontier_labs:
+  - OpenAI
+  - Anthropic
+  - Google DeepMind
+  - DeepMind
+  - Meta AI
+  - FAIR
+  - Mistral AI
+  - xAI
+  - Microsoft AI
+  - Safe Superintelligence
+  - Thinking Machines
+  - Cohere
+  - Scale AI
+  - Figure AI
+  - Waymo
+  - Tesla Autopilot
+  - Nvidia Research
+  - Apple AI
+
+filters:
+  lookback_days: 90
+  min_offering_usd: 100000          # Form D below this is noise
+  max_offering_usd: 750000000       # above this is almost always a fund, not a startup raise
+  exclude_public_companies: [Google, Microsoft, Amazon, Apple, Meta, Nvidia, OpenAI, Anthropic,
+    Tesla, Oracle, Salesforce, IBM, Intel, Samsung, Bloomberg, Reuters]
+  require_theme_match_for: [news, launch, repo, research]   # filings pass on amount+US instead
+  min_composite_floor: 0.15         # below this → Pass, never reaches a model
+
+scoring:
+  weights:            # computed layer; renormalised over available features
+    tier1_count: 0.25
+    signal_velocity: 0.20
+    theme_match: 0.15
+    offering_size_fit: 0.15
+    recency: 0.15
+    source_diversity: 0.10
+  judged_weights:     # blended only when a real (non-stub) LLM judgment exists
+    founder_quality: 0.30
+    moat: 0.30
+    tam_confidence: 0.20
+    meta_thesis_fit: 0.20
+  recommendation_thresholds:   # percentile within (sector, stage) cohort
+    deep_dive: 85
+    watch: 55
+  cohort_min_size: 20
+  brief_auto_threshold_percentile: 90
+  stale_days: 90
+
+alerts:
+  tier1_coinvest_min: 2
+  rate_limit_per_company_hours: 24
+
+digest:
+  days: [mon, wed, fri]
+  hour_local: 7
+  caps:
+    deals: 5
+    sector_calls: 2
+    news: 5
+    peer_moves: 5

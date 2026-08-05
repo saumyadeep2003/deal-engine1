@@ -1,0 +1,23 @@
+# Core pipeline
+httpx>=0.27
+feedparser>=6.0
+beautifulsoup4>=4.12
+openpyxl>=3.1
+PyYAML>=6.0
+APScheduler>=3.10
+openai>=1.40
+pydantic>=2.7
+python-dateutil>=2.9
+numpy>=1.26
+
+# Deployment: web dashboard + API, .env secrets
+fastapi>=0.110
+uvicorn[standard]>=0.29
+python-dotenv>=1.0
+
+# Optional live Google Sheet mirror (degrades gracefully if unused)
+gspread>=6.0
+google-auth>=2.30
+
+# Optional durable database (Supabase/Postgres via DATABASE_URL; SQLite otherwise)
+psycopg[binary]>=3.1

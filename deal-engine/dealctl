@@ -1,0 +1,135 @@
+#!/usr/bin/env bash
+# One control surface for the running engine.
+#
+#   ./dealctl status | start | stop | restart | logs | open | run | digest
+#            | email-test [addr] | sheets | health | doctor | uninstall
+set -uo pipefail
+
+DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+LABEL="com.thirdbase.dealengine"
+PY="$DIR/.venv/bin/python"
+[[ -x "$PY" ]] || PY="$(command -v python3)"
+PORT=$(grep -E '^DEAL_ENGINE_PORT=' "$DIR/.env" 2>/dev/null | cut -d= -f2)
+PORT=${PORT:-8787}
+URL="http://127.0.0.1:$PORT"
+
+b() { printf '\033[1m%s\033[0m\n' "$*"; }
+dim() { printf '\033[2m%s\033[0m\n' "$*"; }
+red() { printf '\033[31m%s\033[0m\n' "$*"; }
+
+api() { curl -fsS --max-time 20 "$URL$1" 2>/dev/null; }
+
+cmd_status() {
+  b "Service"
+  if [[ "$(uname)" == "Darwin" ]]; then
+    if launchctl print "gui/$UID/$LABEL" >/dev/null 2>&1; then
+      pid=$(launchctl print "gui/$UID/$LABEL" 2>/dev/null | awk '/^\tpid = /{print $3}')
+      echo "  LaunchAgent loaded${pid:+, pid $pid}"
+    else
+      red "  LaunchAgent not loaded — run ./deploy/install.sh"
+    fi
+  else
+    systemctl --user is-active dealengine 2>/dev/null | sed 's/^/  systemd: /' || echo "  (not managed by systemd)"
+  fi
+  if api /healthz >/dev/null; then
+    echo "  HTTP: responding at $URL"
+  else
+    red "  HTTP: not responding at $URL"
+  fi
+  echo
+  ( cd "$DIR" && "$PY" deploy/status.py --url "$URL" )
+}
+
+cmd_start() {
+  if [[ "$(uname)" == "Darwin" ]]; then
+    launchctl bootstrap "gui/$UID" "$HOME/Library/LaunchAgents/$LABEL.plist" 2>/dev/null \
+      || launchctl kickstart "gui/$UID/$LABEL"
+  else systemctl --user start dealengine; fi
+  b "started"; sleep 3; cmd_status
+}
+
+cmd_stop() {
+  if [[ "$(uname)" == "Darwin" ]]; then launchctl bootout "gui/$UID/$LABEL" 2>/dev/null || true
+  else systemctl --user stop dealengine; fi
+  b "stopped"
+}
+
+cmd_restart() {
+  if [[ "$(uname)" == "Darwin" ]]; then launchctl kickstart -k "gui/$UID/$LABEL"
+  else systemctl --user restart dealengine; fi
+  b "restarted"; sleep 3; cmd_status
+}
+
+cmd_logs()   { tail -n 60 -f "$DIR/logs/engine.out.log" "$DIR/logs/engine.err.log"; }
+cmd_open()   { command -v open >/dev/null && open "$URL" || echo "$URL"; }
+cmd_health() { api /api/summary | "$PY" -m json.tool | sed -n '1,60p'; }
+
+cmd_run() {
+  b "Triggering a full pipeline run on the service…"
+  curl -fsS -X POST "$URL/api/refresh?full=true" || { red "service not responding"; exit 1; }
+  echo; dim "watch it with: ./dealctl logs"
+}
+
+cmd_digest() {
+  b "Building and sending the digest…"
+  curl -fsS -X POST "$URL/api/digest/send" | "$PY" -m json.tool
+}
+
+cmd_email_test() { ( cd "$DIR" && "$PY" -m outputs.email_send --test "${1:-}" ); }
+cmd_sheets()     { ( cd "$DIR" && "$PY" -m outputs.gsheets ); }
+
+cmd_doctor() {
+  b "Environment"
+  echo "  python      $("$PY" -c 'import sys;print(sys.version.split()[0])' 2>/dev/null || echo missing)"
+  echo "  venv        $([[ -x "$DIR/.venv/bin/python" ]] && echo present || echo 'MISSING — run ./deploy/install.sh')"
+  echo "  .env        $([[ -f "$DIR/.env" ]] && echo present || echo 'missing (optional)')"
+  echo "  database    $([[ -f "$DIR/data/engine.db" ]] && du -h "$DIR/data/engine.db" | cut -f1 || echo 'not seeded')"
+  echo "  workbook    $([[ -f "$DIR/output/deal_pipeline.xlsx" ]] && echo present || echo 'not generated')"
+  echo "  logs        $(ls -1 "$DIR/logs" 2>/dev/null | wc -l | tr -d ' ') file(s)"
+  b "Imports"
+  ( cd "$DIR" && "$PY" - <<'EOF'
+mods = ["httpx","feedparser","bs4","openpyxl","yaml","apscheduler","openai","pydantic",
+        "numpy","fastapi","uvicorn","dotenv","gspread"]
+for m in mods:
+    try:
+        __import__(m); print(f"  ok      {m}")
+    except Exception as e:
+        print(f"  MISSING {m} ({e.__class__.__name__})")
+EOF
+  )
+  b "Connectivity (live sources)"
+  ( cd "$DIR" && "$PY" - <<'EOF'
+import httpx
+for name, url in [("SEC EDGAR","https://efts.sec.gov/LATEST/search-index?q=%22test%22&forms=D"),
+                  ("Hacker News","https://hn.algolia.com/api/v1/search?query=test&hitsPerPage=1"),
+                  ("TechCrunch RSS","https://techcrunch.com/feed/"),
+                  ("arXiv","https://export.arxiv.org/api/query?search_query=cat:cs.AI&max_results=1"),
+                  ("GitHub","https://api.github.com/rate_limit")]:
+    try:
+        r = httpx.get(url, timeout=12, follow_redirects=True,
+                      headers={"User-Agent":"ThirdbaseDealEngine/0.1"})
+        print(f"  {'ok  ' if r.status_code < 400 else 'HTTP'} {r.status_code}  {name}")
+    except Exception as e:
+        print(f"  FAIL      {name} — {type(e).__name__} (falls back to cached snapshot)")
+EOF
+  )
+}
+
+cmd_uninstall() { "$DIR/deploy/uninstall.sh"; }
+
+case "${1:-status}" in
+  status)     cmd_status ;;
+  start)      cmd_start ;;
+  stop)       cmd_stop ;;
+  restart)    cmd_restart ;;
+  logs)       cmd_logs ;;
+  open)       cmd_open ;;
+  run)        cmd_run ;;
+  digest)     cmd_digest ;;
+  email-test) cmd_email_test "${2:-}" ;;
+  sheets)     cmd_sheets ;;
+  health)     cmd_health ;;
+  doctor)     cmd_doctor ;;
+  uninstall)  cmd_uninstall ;;
+  *) echo "usage: ./dealctl {status|start|stop|restart|logs|open|run|digest|email-test [addr]|sheets|health|doctor|uninstall}" ;;
+esac
