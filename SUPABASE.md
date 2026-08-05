@@ -59,3 +59,19 @@ Open the dashboard → the posture banner should have no storage warning, and
 `/api/summary` shows `"storage": {"backend": "postgres", "durable": true, …}`.
 Run a search, then redeploy the service (push any commit) — after it comes back,
 Previous Searches still lists the run. That's the whole point.
+
+## If the service fails to start with "prepared statement already exists"
+
+Supabase's **Transaction pooler** (PgBouncer in transaction mode) gives each
+statement a different server connection, so a server-side `PREPARE` from one
+statement collides with the next and the app dies at boot with
+`DuplicatePreparedStatement: prepared statement "_pg3_0" already exists`.
+
+The engine disables prepared statements on connect (`prepare_threshold = None`),
+which is the correct setting for any pooled connection and harmless on a direct
+one — so this is already handled. If you ever see it again, that setting is the
+thing to check. The Session pooler (port 5432) also avoids it, but the transaction
+pooler is the better fit for a service that sleeps and wakes.
+
+The engine also reconnects by itself if the pooler recycles the connection while
+the service is idle, so a dashboard left open overnight keeps working.

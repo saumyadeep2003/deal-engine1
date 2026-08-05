@@ -256,3 +256,16 @@ Chronological log of judgment calls made while building. Part of the deliverable
     the dashboard's posture banner. `POST /api/llm/test` (the "Test AI connection" button)
     makes one real call and reports the same verdict on demand, so diagnosis takes a click
     rather than a log hunt. Classification verified against all five error shapes.
+43. **Supabase's transaction pooler killed the deploy, and the fallback didn't catch it.**
+    Boot failed with `DuplicatePreparedStatement: prepared statement "_pg3_0" already
+    exists` — psycopg3 auto-prepares after five identical executions, and `_migrate()`
+    issues exactly that shape seven times, while PgBouncer in transaction mode hands each
+    statement a different server connection. Fix: `prepare_threshold = None` on connect,
+    correct for any pooled connection and harmless on a direct one. Two supporting fixes
+    from the same incident: `_migrate()` now runs *inside* the guarded block, so a Postgres
+    problem degrades to SQLite with a loud banner instead of exiting (the earlier safety net
+    only covered connect + schema); and a dropped pooled connection is detected and
+    reconnected once per statement, so a recycled connection costs a reconnect rather than a
+    dead dashboard. Verified against real Postgres: 12 identical parameterised queries, a
+    forced mid-flight connection close, and a full tracked pipeline run (43 companies,
+    7 top picks) with zero tracebacks.

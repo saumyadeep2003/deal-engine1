@@ -1,10 +1,10 @@
 # Pangram — intelligence brief
 
-Generated: 2026-08-05T10:34:38Z | trigger: auto_threshold | recommendation: **Deep Dive**
+Generated: 2026-08-05T20:30:24Z | trigger: auto_threshold | recommendation: **Deep Dive**
 
 ## Funding history
 
-- 2026-07-29: round — $9.0M [S:111] (https://news.ycombinator.com/item?id=49098695)
+- 2026-07-29: round — $9.0M [S:115] (https://news.ycombinator.com/item?id=49098695)
 
 ## Cap table quality
 
@@ -16,7 +16,7 @@ Generated: 2026-08-05T10:34:38Z | trigger: auto_threshold | recommendation: **De
 
 ## Product traction
 
-- 2026-07-29 funding_event: Pangram raises $9M to detect AI content [S:111]
+- 2026-07-29 funding_event: Pangram raises $9M to detect AI content [S:115]
 
 ## Thesis fit (computed)
 
@@ -25,11 +25,7 @@ Generated: 2026-08-05T10:34:38Z | trigger: auto_threshold | recommendation: **De
 
 ## Investor & operator commentary
 
-- [hackernews] [STUB: no API key — judgment unavailable] — “I ran this through an AI checker and it flagged half of it immediately. @dang, I know Substack just enabled Pangram integration, is there an” (https://news.ycombinator.com/item?id=49098012)
-- [hackernews] [STUB: no API key — judgment unavailable] — “&gt; By the way, this is the method that uni professors have been using to catch students using LLMs to do homework. I'm curious how that wi” (https://news.ycombinator.com/item?id=49097123)
-- [hackernews] [STUB: no API key — judgment unavailable] — “Not easy to remember, but I recall this phrase appeared in the Guinness Book of World Records for shortest pangram:  "Veldt jynx grimps waqf” (https://news.ycombinator.com/item?id=9840541)
-- [hackernews] [STUB: no API key — judgment unavailable] — “"Searching Twitterdjklquvxyz for a better pangram" works!” (https://news.ycombinator.com/item?id=9839741)
-- [hackernews] [STUB: no API key — judgment unavailable] — “Isn't it a bit silly to throw away every single @&lt;user&gt; tweet? Imagine I'm having a twitter conversation with my friends about who can” (https://news.ycombinator.com/item?id=9839534)
+- None captured yet in free sources (HN/Reddit); X, Blind, podcasts, Substack threads — (require licenses).
 ## Judgment (model-generated — labelled, distinct from observed data)
 
 - Founder quality: [STUB: no API key — judgment unavailable]

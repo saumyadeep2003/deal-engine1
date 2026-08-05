@@ -1,6 +1,6 @@
 # Bagel — intelligence brief
 
-Generated: 2026-08-05T10:34:38Z | trigger: auto_threshold | recommendation: **Deep Dive**
+Generated: 2026-08-05T20:30:24Z | trigger: auto_threshold | recommendation: **Deep Dive**
 
 ## Funding history
 
@@ -16,11 +16,11 @@ Generated: 2026-08-05T10:34:38Z | trigger: auto_threshold | recommendation: **De
 
 ## Product traction
 
-- 2026-07-24 launch: Show HN: Bagel (Bag ExpLoration) for ROSBAGs [S:231]
+- 2026-07-24 launch: Show HN: Bagel (Bag ExpLoration) for ROSBAGs [S:235]
 
 ## Thesis fit (computed)
 
-- 93th percentile of 14 in cohort robotics|unknown — LOW CONFIDENCE (cohort < 20) [computed]
+- 93th percentile of 15 in cohort robotics|unknown — LOW CONFIDENCE (cohort < 20) [computed]
 - Feature vector stored (scores.features_json, model=computed-v1, prompt=score-p1) [computed]
 
 ## Investor & operator commentary

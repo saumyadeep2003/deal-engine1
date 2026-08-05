@@ -1,6 +1,6 @@
 # Tianzheng Biotechnology Inc — intelligence brief
 
-Generated: 2026-08-05T10:34:38Z | trigger: auto_threshold | recommendation: **Deep Dive**
+Generated: 2026-08-05T20:30:24Z | trigger: auto_threshold | recommendation: **Deep Dive**
 
 ## Funding history
 
@@ -16,7 +16,7 @@ Generated: 2026-08-05T10:34:38Z | trigger: auto_threshold | recommendation: **De
 
 ## Product traction
 
-- 2026-07-14 filing: Tianzheng Biotechnology Inc [S:10]
+- 2026-07-14 filing: Tianzheng Biotechnology Inc [S:14]
 
 ## Thesis fit (computed)
 

@@ -120,10 +120,25 @@ def connect(db_path: Path | None = None):
                 from psycopg.rows import dict_row
                 _conn = psycopg.connect(DATABASE_URL, autocommit=True,
                                         row_factory=dict_row, connect_timeout=15)
+                # Supabase's transaction pooler (PgBouncer in transaction mode) hands
+                # each statement a different server connection, so a server-side
+                # PREPARE from one statement collides with the next:
+                #   DuplicatePreparedStatement: prepared statement "_pg3_0" already exists
+                # psycopg3 prepares automatically after 5 identical executions, which is
+                # exactly what _migrate() does. None disables that entirely — the correct
+                # setting for any pooled connection, and harmless on a direct one.
+                _conn.prepare_threshold = None
                 with _lock:
                     _conn.execute((ROOT / "db" / "pg_compat.sql").read_text())
                     _conn.execute(_postgres_schema())
+                _migrate()          # inside the guard: a migration failure must also
+                                    # degrade to SQLite rather than kill the service
             except Exception as e:  # noqa: BLE001 — any failure means "no Postgres"
+                try:
+                    if _conn is not None:
+                        _conn.close()
+                except Exception:  # noqa: BLE001
+                    pass
                 _conn = None
                 _PG_ERROR = f"{type(e).__name__}: {str(e).strip()[:300]}"
         if _PG_ERROR:
@@ -138,7 +153,7 @@ def connect(db_path: Path | None = None):
         _conn.row_factory = sqlite3.Row
         _conn.executescript((ROOT / "db" / "schema.sql").read_text())
         _conn.commit()
-    _migrate()
+        _migrate()
     return _conn
 
 
@@ -150,12 +165,45 @@ def _translate(sql: str) -> str:
     return sql.replace("%", "%%").replace("?", "%s")
 
 
+_DROPPED = ("the connection is closed", "connection is bad", "server closed",
+            "connection already closed", "consuming input failed", "ssl connection has been closed")
+
+
+def _is_dropped_connection(exc: Exception) -> bool:
+    """A pooled Supabase connection can be recycled out from under a long-running
+    service. That must cost one reconnect, not a dead dashboard."""
+    return BACKEND == "postgres" and any(s in str(exc).lower() for s in _DROPPED)
+
+
+def _reconnect() -> None:
+    global _conn
+    logging.getLogger("dealengine").warning("database connection dropped — reconnecting")
+    try:
+        if _conn is not None:
+            _conn.close()
+    except Exception:  # noqa: BLE001
+        pass
+    _conn = None
+    connect()
+
+
+def _pg_exec(sql: str, params: tuple, fetch: bool):
+    """Run one Postgres statement, reconnecting once if the pool dropped us."""
+    for attempt in (0, 1):
+        try:
+            with _lock:
+                cur = _conn.execute(_translate(sql), params) if params else _conn.execute(sql)
+                return cur.fetchall() if fetch else cur
+        except Exception as exc:  # noqa: BLE001
+            if attempt == 0 and _is_dropped_connection(exc):
+                _reconnect()
+                continue
+            raise
+
+
 def _raw_execute(sql: str, params: tuple = ()):
     if BACKEND == "postgres":
-        with _lock:
-            if params:
-                return _conn.execute(_translate(sql), params)
-            return _conn.execute(sql)     # no params -> no placeholder parsing
+        return _pg_exec(sql, params, fetch=False)
     cur = _conn.execute(sql, params)
     _conn.commit()
     return cur
@@ -166,10 +214,7 @@ def _raw_execute(sql: str, params: tuple = ()):
 def q(sql: str, params: tuple = ()) -> list:
     connect()
     if BACKEND == "postgres":
-        with _lock:
-            if params:
-                return _conn.execute(_translate(sql), params).fetchall()
-            return _conn.execute(sql).fetchall()
+        return _pg_exec(sql, params, fetch=True)
     return _conn.execute(sql, params).fetchall()
 
 
@@ -192,9 +237,8 @@ def insert(table: str, values: dict) -> int:
     ph = ", ".join("?" for _ in values)
     sql = f"INSERT INTO {table} ({keys}) VALUES ({ph})"
     if BACKEND == "postgres":
-        with _lock:
-            cur = _conn.execute(_translate(sql) + " RETURNING id", tuple(values.values()))
-            return cur.fetchone()["id"]
+        cur = _pg_exec(sql + " RETURNING id", tuple(values.values()), fetch=False)
+        return cur.fetchone()["id"]
     cur = _conn.execute(sql, tuple(values.values()))
     _conn.commit()
     return cur.lastrowid

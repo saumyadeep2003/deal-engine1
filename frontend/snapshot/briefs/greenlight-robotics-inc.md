@@ -1,6 +1,6 @@
 # Greenlight Robotics Inc. — intelligence brief
 
-Generated: 2026-08-05T13:47:02Z | trigger: auto_threshold | recommendation: **Deep Dive**
+Generated: 2026-08-05T20:30:24Z | trigger: auto_threshold | recommendation: **Deep Dive**
 
 ## Funding history
 
@@ -16,12 +16,12 @@ Generated: 2026-08-05T13:47:02Z | trigger: auto_threshold | recommendation: **De
 
 ## Product traction
 
-- 2026-07-25 launch: Show HN: Robotics startups are hiring across several roles [S:228]
-- 2026-07-16 filing: Greenlight Robotics Inc. [S:5]
+- 2026-07-25 launch: Show HN: Robotics startups are hiring across several roles [S:232]
+- 2026-07-16 filing: Greenlight Robotics Inc. [S:9]
 
 ## Thesis fit (computed)
 
-- 100th percentile of 12 in cohort robotics|unknown — LOW CONFIDENCE (cohort < 20) [computed]
+- 100th percentile of 15 in cohort robotics|unknown — LOW CONFIDENCE (cohort < 20) [computed]
 - Feature vector stored (scores.features_json, model=computed-v1, prompt=score-p1) [computed]
 
 ## Investor & operator commentary
