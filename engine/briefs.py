@@ -122,17 +122,30 @@ def _observed_sections(company_id: int) -> str:
         pr = json.loads(pricing["value_json"])
         out.append(f"- Pricing: {pr.get('model')} — plans: {', '.join(pr.get('plan_names') or [])}"
                    f" [computed] ({pr.get('url')})")
+    # Everything else the engine holds on this company. Funding events are excluded:
+    # they are reported under Funding history above, and a funding announcement is
+    # not product traction — listing it here overstated what the evidence shows.
     sigs = db.q("SELECT id, kind, observed_at, url, payload_json FROM signals"
-                " WHERE company_id=? ORDER BY observed_at DESC LIMIT 8", (company_id,))
-    for s in sigs:
-        title = json.loads(s["payload_json"]).get("title") or json.loads(s["payload_json"]).get("issuer") or s["kind"]
-        out.append(f"- {s['observed_at'][:10]} {s['kind']}: {str(title)[:100]} [S:{s['id']}]")
+                " WHERE company_id=? AND kind!='funding_event'"
+                " ORDER BY observed_at DESC LIMIT 8", (company_id,))
+    if not any(line.startswith("- ") for line in out[out.index("\n## Product traction\n") + 1:]):
+        out.append("- No product-traction evidence in free sources yet"
+                   " (GitHub activity, customer wins, pricing pages, customer logos).")
+    if sigs:
+        out.append("\n**Other recent signals** (mentions, not traction):\n")
+        for s in sigs:
+            title = (json.loads(s["payload_json"]).get("title")
+                     or json.loads(s["payload_json"]).get("issuer") or s["kind"])
+            out.append(f"- {s['observed_at'][:10]} {s['kind']}: {str(title)[:100]} [S:{s['id']}]")
 
     out.append("\n## Thesis fit (computed)\n")
     if score:
         lc = " — LOW CONFIDENCE (cohort < 20)" if score["cohort_low_confidence"] else ""
+        ck = str(score["cohort_key"] or "")
+        if ck.startswith("unclassified|"):
+            ck += " (sector not determined from the available text — this is a catch-all bucket)"
         out.append(f"- {score['percentile']:.0f}th percentile of {score['cohort_size']}"
-                   f" in cohort {score['cohort_key']}{lc} [computed]")
+                   f" in cohort {ck}{lc} [computed]")
         out.append(f"- Feature vector stored (scores.features_json, model={score['model_version']},"
                    f" prompt={score['prompt_version']}) [computed]")
 
@@ -176,6 +189,25 @@ def _judgment_sections(company_id: int, judged: dict | None) -> str:
     return "\n".join(out)
 
 
+def _existing_brief_is_stubbed(company_id: int) -> bool:
+    """True when this company's newest brief carries a [STUB] judgment. Such a brief
+    is stale the moment the model works again, so it is worth rewriting even when the
+    daily cap is spent."""
+    row = db.q1("SELECT content_md FROM briefs WHERE company_id=?"
+                " ORDER BY generated_at DESC, id DESC LIMIT 1", (company_id,))
+    md = row["content_md"] if row else None      # sqlite3.Row has no .get()
+    if not md:
+        return False
+    # Scope to the judgment section ONLY. Stored commentary rows keep a [STUB]
+    # sentiment marker from whenever they were harvested, and matching those would
+    # mark every brief as needing repair — regenerating the same briefs every run.
+    marker = "## Judgment"
+    if marker not in md:
+        return False
+    judgment = md.split(marker, 1)[1].split("\n## ", 1)[0]
+    return "[STUB" in judgment
+
+
 def generate_brief(company_id: int, trigger: str = "on_demand",
                    judged: dict | None = None, verbose: bool = True) -> int | None:
     limits = models_config()["limits"]
@@ -183,10 +215,17 @@ def generate_brief(company_id: int, trigger: str = "on_demand",
     today_str = db.now_iso()[:10]
     today = db.q1("SELECT COUNT(*) c FROM briefs WHERE substr(generated_at,1,10) = ?",
                   (today_str,))["c"]
-    if trigger == "auto_threshold" and today >= limits["max_briefs_per_day"]:
+    # Repairing a stubbed brief is not the same spend as writing a new one, and it
+    # must not be blocked by the daily cap: a brief written while the model was
+    # unavailable would otherwise keep showing [STUB] all day even after the model
+    # came back — which is exactly what happened on the hosted engine.
+    is_repair = bool(judged) and _existing_brief_is_stubbed(company_id)
+    if trigger == "auto_threshold" and not is_repair and today >= limits["max_briefs_per_day"]:
         if verbose:
             print(f"  brief cap reached ({limits['max_briefs_per_day']}/day) — skipping auto brief")
         return None
+    if is_repair:
+        trigger = "stub_repair"
     c = db.q1("SELECT * FROM companies WHERE id=?", (company_id,))
     if not c or c["is_synthetic"]:
         return None
@@ -201,7 +240,16 @@ def generate_brief(company_id: int, trigger: str = "on_demand",
           + "\n\n## Comparable companies\n"
           + _comparables(company_id)
           + f"\n\n## Recommendation\n**{rec}** [computed]"
-            f" (percentile thresholds in config/thesis.yaml; partner override wins)\n")
+            f" (percentile thresholds in config/thesis.yaml; partner override wins)"
+          # A rank is only as strong as the cohort behind it. Promoting on a
+          # 5-company bucket without saying so overstates the evidence.
+          + (f"\n\n> Caveat: this rank comes from a cohort of only"
+             f" {score['cohort_size']} comparable companies"
+             + (" in the 'unclassified' catch-all bucket"
+                if str(score["cohort_key"] or "").startswith("unclassified|") else "")
+             + ". Treat it as a prompt to look, not as evidence of relative quality —"
+               " a wider cohort (or licensed data) is what makes the ranking meaningful.\n"
+             if score and score["cohort_low_confidence"] else "\n"))
 
     violations = validate_brief(md)
     if violations and judged:
@@ -238,14 +286,28 @@ def generate_brief(company_id: int, trigger: str = "on_demand",
 
 
 def _comparables(company_id: int) -> str:
+    """Peers must come from the SAME cohort the percentile was computed in.
+    Scoring buckets a company with no sector into 'unclassified', so bailing out
+    on a null sector produced briefs that claimed a percentile in one breath and
+    'no cohort assigned' in the next — a self-contradiction on the page."""
     c = db.q1("SELECT sector, stage FROM companies WHERE id=?", (company_id,))
-    if not c or not c["sector"]:
+    if not c:
         return "- No cohort assigned yet."
-    rows = db.q("""SELECT name, market_rank FROM companies WHERE sector=? AND id!=?
-                   AND is_synthetic=0 AND status IN ('hot','watchlist','pipeline')
-                   ORDER BY market_rank LIMIT 5""", (c["sector"], company_id))
+    if c["sector"]:
+        rows = db.q("""SELECT name, market_rank FROM companies WHERE sector=? AND id!=?
+                       AND is_synthetic=0 AND status IN ('hot','watchlist','pipeline')
+                       ORDER BY market_rank LIMIT 5""", (c["sector"], company_id))
+    else:
+        rows = db.q("""SELECT name, market_rank FROM companies WHERE sector IS NULL AND id!=?
+                       AND is_synthetic=0 AND status IN ('hot','watchlist','pipeline')
+                       ORDER BY market_rank LIMIT 5""", (company_id,))
     if not rows:
         return "- No comparables in pipeline yet for this cohort."
+    if not c["sector"]:
+        return ("- Cohort is the 'unclassified' catch-all (sector not determined from the "
+                "available text), so these are weak comparables:\n"
+                + "\n".join(f"- {r['name']} (market rank {r['market_rank']} in cohort) [computed]"
+                            for r in rows))
     return "\n".join(f"- {r['name']} (market rank {r['market_rank']} in cohort) [computed]"
                      for r in rows)
 
