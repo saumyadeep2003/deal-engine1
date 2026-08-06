@@ -474,11 +474,14 @@ def refresh(full: bool = True) -> dict:
 
 
 @app.post("/api/llm/test")
-def llm_test() -> dict:
+def llm_test(model: str | None = None, hard: bool = False) -> dict:
     """Make one real call to the model provider and report exactly what happened —
-    key rejected, model unavailable, out of credits, or working."""
+    key rejected, model unavailable, out of credits, too slow, or working.
+
+    `model=` probes any model without a redeploy; `hard=true` uses a judging-sized
+    prompt, which is the only test that reflects what the pipeline actually does."""
     _budget_or_429("llm_test")
-    return llm.self_test()
+    return llm.self_test(model_override=model, hard=hard)
 
 
 @app.get("/api/run/plan")

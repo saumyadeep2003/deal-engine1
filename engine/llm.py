@@ -146,6 +146,12 @@ def _log(stage: str, model: str, pt: int, ct: int, stub: bool) -> None:
 def complete(stage: str, system: str, user: str, tier: str | None = None) -> str:
     """Plain-text completion. Returns STUB_TEXT when no key is configured."""
     model = models_config()["tiers"][tier or stage if (tier or stage) in models_config()["tiers"] else "score"]
+    return _raw_complete(model, stage, system, user)
+
+
+def _raw_complete(model: str, stage: str, system: str, user: str) -> str:
+    """The call itself, with an explicit model — so a diagnostic can probe any model
+    without editing config and redeploying."""
     if stubbed():
         _log(stage, model, 0, 0, stub=True)
         return STUB_TEXT
@@ -204,17 +210,34 @@ def complete(stage: str, system: str, user: str, tier: str | None = None) -> str
     return resp.choices[0].message.content or ""
 
 
-def self_test() -> dict:
-    """One tiny real call, so 'why is everything stubbed?' is answerable from the
-    dashboard instead of the host's logs. Never raises."""
+def self_test(model_override: str | None = None, hard: bool = False) -> dict:
+    """One real call, so 'why is everything stubbed?' is answerable from the dashboard
+    instead of the host's logs. Never raises.
+
+    `model_override` probes a specific model without a deploy — the difference between
+    "change config, push, wait 4 minutes, hope" and "try three models in 30 seconds".
+    `hard=True` sends a judging-sized prompt: a trivial "reply OK" passed in 0.8s while
+    every real judgment timed out, so the easy test was answering the wrong question."""
     key_env = api_key_env_name()
     if stubbed():
         return {"ok": False, "reason": f"{key_env} is not set in this environment",
                 "key_env": key_env, "key_present": False}
-    model = models_config()["tiers"]["score"]
+    model = model_override or models_config()["tiers"]["score"]
     circuit_reset()                      # a test should try, not inherit a tripped circuit
     t0 = _t.time()
-    out = complete("selftest", "You are a connection test.", "Reply with the word OK.")
+    if hard:
+        out = _raw_complete(model, "selftest",
+                            "You are a venture analyst. Judge the company below on founder "
+                            "quality, moat and TAM with explicit assumptions, then give a "
+                            "short thesis narrative. Cite signal ids [S:n].",
+                            "Company: Testco | sector: robotics | stage: seed\n"
+                            "[S:1] funding_event @ 2026-08-01 :: {\"title\": \"Testco raises "
+                            "$20M Series A led by a tier-1 fund for warehouse robots\"}\n"
+                            "[S:2] news @ 2026-08-02 :: {\"title\": \"Testco signs pilot with "
+                            "a national logistics operator\"}")
+    else:
+        out = _raw_complete(model, "selftest", "You are a connection test.",
+                            "Reply with the word OK.")
     took = round(_t.time() - t0, 1)
     if is_stub(out):
         err = last_error() or {}

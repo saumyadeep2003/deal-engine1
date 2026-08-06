@@ -1,10 +1,10 @@
 # Pangram — intelligence brief
 
-Generated: 2026-08-05T20:30:24Z | trigger: auto_threshold | recommendation: **Deep Dive**
+Generated: 2026-08-05T21:12:21Z | trigger: manual | recommendation: **Deep Dive**
 
 ## Funding history
 
-- 2026-07-29: round — $9.0M [S:115] (https://news.ycombinator.com/item?id=49098695)
+- 2026-07-29: round — $9.0M [S:111] (https://news.ycombinator.com/item?id=49098695)
 
 ## Cap table quality
 
@@ -16,16 +16,17 @@ Generated: 2026-08-05T20:30:24Z | trigger: auto_threshold | recommendation: **De
 
 ## Product traction
 
-- 2026-07-29 funding_event: Pangram raises $9M to detect AI content [S:115]
+- No product-traction evidence in free sources yet (GitHub activity, customer wins, pricing pages, customer logos).
 
 ## Thesis fit (computed)
 
-- 100th percentile of 11 in cohort unclassified|unknown — LOW CONFIDENCE (cohort < 20) [computed]
+- 100th percentile of 10 in cohort unclassified|unknown (sector not determined from the available text — this is a catch-all bucket) — LOW CONFIDENCE (cohort < 20) [computed]
 - Feature vector stored (scores.features_json, model=computed-v1, prompt=score-p1) [computed]
 
 ## Investor & operator commentary
 
-- None captured yet in free sources (HN/Reddit); X, Blind, podcasts, Substack threads — (require licenses).
+- [hackernews] [STUB: no API key — judgment unavailable] — “I ran this through an AI checker and it flagged half of it immediately. @dang, I know Substack just enabled Pangram integration, is there an” (https://news.ycombinator.com/item?id=49098012)
+- [hackernews] [STUB: no API key — judgment unavailable] — “&gt; By the way, this is the method that uni professors have been using to catch students using LLMs to do homework. I'm curious how that wi” (https://news.ycombinator.com/item?id=49097123)
 ## Judgment (model-generated — labelled, distinct from observed data)
 
 - Founder quality: [STUB: no API key — judgment unavailable]
@@ -38,7 +39,14 @@ Generated: 2026-08-05T20:30:24Z | trigger: auto_threshold | recommendation: **De
 [STUB: no API key — judgment unavailable]
 
 ## Comparable companies
-- No cohort assigned yet.
+- Cohort is the 'unclassified' catch-all (sector not determined from the available text), so these are weak comparables:
+- Moonshot AI (market rank 1 in cohort) [computed]
+- OpenRouter (market rank 1 in cohort) [computed]
+- Travis Kalanick's Atoms (market rank 2 in cohort) [computed]
+- DeepInfra (market rank 2 in cohort) [computed]
+- Tech-Infused Pool Hall Startup (market rank 3 in cohort) [computed]
 
 ## Recommendation
 **Deep Dive** [computed] (percentile thresholds in config/thesis.yaml; partner override wins)
+
+> Caveat: this rank comes from a cohort of only 10 comparable companies in the 'unclassified' catch-all bucket. Treat it as a prompt to look, not as evidence of relative quality — a wider cohort (or licensed data) is what makes the ranking meaningful.
