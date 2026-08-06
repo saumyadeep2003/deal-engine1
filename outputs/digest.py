@@ -137,8 +137,8 @@ def build_digest(verbose: bool = True) -> Path:
     .deal{{margin:0.8rem 0;padding:0.6rem;background:#f6f8fa;border-left:3px solid #1F3B57}}
     .empty{{color:#888;font-style:italic}} small{{color:#666}}
     </style></head><body>
-    <h1>Thirdbase deal digest — {db.now_iso()[:10]}</h1>
-    <p><small>Window: since {since[:10]}. Every figure traces to a stored signal;
+    <h1>Thirdbase deal digest — {db.to_display(db.now_iso(), fmt='%d %b %Y', with_label=False)}</h1>
+    <p><small>Window: since {db.to_display(since, fmt='%d %b %Y', with_label=False)}. Every figure traces to a stored signal;
     licence-gated fields are marked, judgment fields are stubbed without an API key.</small></p>
     {section(f"Top new deals (cap {caps['deals']})", deals, deal_html)}
     {section(f"Sector calls (cap {caps['sector_calls']})", sector_calls, sector_html)}

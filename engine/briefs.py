@@ -42,6 +42,85 @@ def validate_brief(md: str) -> list[str]:
     return violations
 
 
+REC_PLAIN = {"Deep Dive": "Worth a close look now",
+             "Watch": "Keep an eye on it",
+             "Pass": "Not a fit right now"}
+
+
+def _ordinal(n: int) -> str:
+    if 10 <= n % 100 <= 20:
+        return f"{n}th"
+    return f"{n}{ {1: 'st', 2: 'nd', 3: 'rd'}.get(n % 10, 'th') }"
+
+
+def _headline(c, score, rec: str, trigger: str) -> str:
+    """One line a partner can read standing up: what it is, what we think, how fresh."""
+    what = " · ".join(x for x in [c["sub_sector"] or c["sector"], c["stage"], c["hq"]] if x)
+    line = f"**{REC_PLAIN.get(rec, rec)}** ({rec})"
+    if what:
+        line += f" · {what}"
+    # the timestamp carries [computed] because it is provenance, not a claim —
+    # without it the citation validator would flag its digits
+    line += (f"\n\n*Written {db.to_display(db.now_iso(), fmt='%d %b %Y, %H:%M')}"
+             f" · trigger: {trigger}* [computed]\n\n")
+    return line
+
+
+def _at_a_glance(company_id: int, c, score, rec: str) -> str:
+    """The six things a partner checks first, in one table. Every figure carries its
+    source marker so the table cannot become a place where uncited numbers hide."""
+    feats = json.loads(score["features_json"])["computed"] if score and score["features_json"] else {}
+    rounds = db.q("""SELECT fr.amount_usd, fr.stage, s.id sid FROM funding_rounds fr
+                     LEFT JOIN signals s ON fr.source_signal_id=s.id
+                     WHERE fr.company_id=? ORDER BY fr.announced_at DESC LIMIT 1""",
+                  (company_id,))
+    if rounds and rounds[0]["amount_usd"]:
+        r = rounds[0]
+        funding = f"${r['amount_usd'] / 1e6:.1f}M {r['stage'] or 'round'} [S:{r['sid']}]"
+    elif rounds:
+        funding = f"round observed, amount not disclosed [S:{rounds[0]['sid']}]"
+    else:
+        funding = "none found in free sources — full history requires PitchBook"
+
+    if score and score["cohort_size"]:
+        size = score["cohort_size"]
+        pos = max(1, min(size, size - round((score["percentile"] or 0) / 100 * size) + 1))
+        # cohort_key is "sector|stage" — a raw pipe would split the markdown table cell
+        cohort = str(score["cohort_key"] or "").replace("|", " · ").replace("unknown", "stage unknown")
+        rank = (f"{_ordinal(pos)} of {size} in {cohort} [computed]"
+                + (" ⚠ small cohort, weak evidence" if score["cohort_low_confidence"] else ""))
+    else:
+        rank = "not ranked yet [computed]"
+
+    t1 = feats.get("tier1_count", {}).get("value", 0)
+    rows = [
+        ("Our call", f"**{rec}** — {REC_PLAIN.get(rec, '').lower()} [computed]"),
+        ("Rank against peers", rank),
+        ("Funding we can see", funding),
+        ("Tier-1 investors on board", f"{t1} [computed]"),
+        # date only, so no clock label — "25 Jul 2026 IST" reads like a bug
+        ("Last sign of activity", db.to_display(c["last_signal_at"], fmt="%d %b %Y",
+                                                with_label=False)),
+        ("Headcount & growth", "— (requires Coresignal)"),
+    ]
+    out = ["\n## At a glance\n", "| | |", "|---|---|"]
+    out += [f"| {k} | {v} |" for k, v in rows]
+    return "\n".join(out) + "\n"
+
+
+def _gaps_section(company_id: int) -> str:
+    """What this brief cannot tell you, stated plainly. A partner who knows the
+    shape of the hole reads the rest correctly; one who doesn't over-trusts it."""
+    gaps = ["Headcount, hiring growth and runway — requires Coresignal",
+            "Full cap table, valuation and complete funding history — requires PitchBook",
+            "What investors are saying privately (X, Blind, podcasts, Substack) — requires those licences"]
+    if not db.q1("SELECT id FROM founders WHERE company_id=? LIMIT 1", (company_id,)):
+        gaps.insert(0, "No founder information found in free sources — team quality is unassessed")
+    if not db.q1("SELECT id FROM commentary WHERE company_id=? LIMIT 1", (company_id,)):
+        gaps.insert(0, "No public discussion found yet — sentiment is unknown, not negative")
+    return "\n\n## What this brief can't tell you\n\n" + "\n".join(f"- {g}" for g in gaps)
+
+
 def _observed_sections(company_id: int) -> str:
     """Mechanically assembled REAL data with citations — no model involved."""
     c = db.q1("SELECT * FROM companies WHERE id=?", (company_id,))
@@ -50,7 +129,7 @@ def _observed_sections(company_id: int) -> str:
     feats = json.loads(score["features_json"])["computed"] if score else {}
     out = []
 
-    out.append("## Funding history\n")
+    out.append("\n## Money raised\n")
     rounds = db.q("""SELECT fr.*, i.name lead, s.url, s.id sid FROM funding_rounds fr
                      LEFT JOIN investors i ON fr.lead_investor_id=i.id
                      LEFT JOIN signals s ON fr.source_signal_id=s.id
@@ -64,7 +143,7 @@ def _observed_sections(company_id: int) -> str:
     else:
         out.append("- No round observed in free sources. Full history — (requires PitchBook).")
 
-    out.append("\n## Cap table quality\n")
+    out.append("\n## Who has backed them\n")
     t1 = feats.get("tier1_count", {}).get("value", 0)
     t2 = feats.get("tier2_count", {}).get("value", 0)
     t3 = feats.get("tier3_count", {}).get("value", 0)
@@ -76,7 +155,7 @@ def _observed_sections(company_id: int) -> str:
         out.append("- Observed investors: " + ", ".join(f"{i['name']} (T{i['tier'] or '?'})"
                                                         for i in invs) + " [computed]")
 
-    out.append("\n## Team & hiring signals\n")
+    out.append("\n## The team\n")
     founders = db.q("SELECT * FROM founders WHERE company_id=?", (company_id,))
     for f in founders:
         out.append(f"- {f['name']}{' — prior exits: ' + str(f['prior_exits']) if f['prior_exits'] else ''}"
@@ -96,7 +175,7 @@ def _observed_sections(company_id: int) -> str:
                    f" (source: {careers['source']})")
     out.append("- Headcount / 6-month growth: — (requires Coresignal)")
 
-    out.append("\n## Product traction\n")
+    out.append("\n## Signs of traction\n")
     for field, label in (("github_stars", "GitHub stars"),
                          ("github_contributors", "GitHub contributors"),
                          ("github_commit_velocity", "GitHub commit velocity")):
@@ -128,7 +207,8 @@ def _observed_sections(company_id: int) -> str:
     sigs = db.q("SELECT id, kind, observed_at, url, payload_json FROM signals"
                 " WHERE company_id=? AND kind!='funding_event'"
                 " ORDER BY observed_at DESC LIMIT 8", (company_id,))
-    if not any(line.startswith("- ") for line in out[out.index("\n## Product traction\n") + 1:]):
+    traction_heading = "\n## Signs of traction\n"
+    if not any(line.startswith("- ") for line in out[out.index(traction_heading) + 1:]):
         out.append("- No product-traction evidence in free sources yet"
                    " (GitHub activity, customer wins, pricing pages, customer logos).")
     if sigs:
@@ -138,7 +218,7 @@ def _observed_sections(company_id: int) -> str:
                      or json.loads(s["payload_json"]).get("issuer") or s["kind"])
             out.append(f"- {s['observed_at'][:10]} {s['kind']}: {str(title)[:100]} [S:{s['id']}]")
 
-    out.append("\n## Thesis fit (computed)\n")
+    out.append("\n## How it ranks against similar companies\n")
     if score:
         lc = " — LOW CONFIDENCE (cohort < 20)" if score["cohort_low_confidence"] else ""
         ck = str(score["cohort_key"] or "")
@@ -149,7 +229,7 @@ def _observed_sections(company_id: int) -> str:
         out.append(f"- Feature vector stored (scores.features_json, model={score['model_version']},"
                    f" prompt={score['prompt_version']}) [computed]")
 
-    out.append("\n## Investor & operator commentary\n")
+    out.append("\n## What people are saying publicly\n")
     comm = db.q("SELECT * FROM commentary WHERE company_id=? ORDER BY observed_at DESC LIMIT 5",
                 (company_id,))
     if comm:
@@ -163,7 +243,8 @@ def _observed_sections(company_id: int) -> str:
 
 
 def _judgment_sections(company_id: int, judged: dict | None) -> str:
-    out = ["\n## Judgment (model-generated — labelled, distinct from observed data)\n"]
+    out = ["\n\n## What the AI makes of it\n",
+           "*Model-written judgement — labelled on purpose, and separate from the observed facts above. Numbers here are opinions, not measurements.*\n"]
     if not judged:
         # name the actual cause: no key, provider failing, or provider timed out.
         s = (llm.STUB_TEXT if llm.stubbed()
@@ -233,14 +314,17 @@ def generate_brief(company_id: int, trigger: str = "on_demand",
                   (company_id,))
     rec = (score["human_override"] or score["recommendation"]) if score else "Watch"
 
-    md = (f"# {c['name']} — intelligence brief\n\n"
-          f"Generated: {db.now_iso()} | trigger: {trigger} | recommendation: **{rec}**\n\n"
+    md = (f"# {c['name']}\n\n"
+          + _headline(c, score, rec, trigger)
+          + _at_a_glance(company_id, c, score, rec)
           + _observed_sections(company_id)
           + _judgment_sections(company_id, judged)
-          + "\n\n## Comparable companies\n"
+          + _gaps_section(company_id)
+          + "\n\n## Similar companies we're tracking\n"
           + _comparables(company_id)
-          + f"\n\n## Recommendation\n**{rec}** [computed]"
-            f" (percentile thresholds in config/thesis.yaml; partner override wins)"
+          + f"\n\n## The call\n**{rec}** [computed]"
+            f" — set by percentile thresholds in config/thesis.yaml. A partner's own"
+            f" call always overrides this and is recorded."
           # A rank is only as strong as the cohort behind it. Promoting on a
           # 5-company bucket without saying so overstates the evidence.
           + (f"\n\n> Caveat: this rank comes from a cohort of only"

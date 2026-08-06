@@ -126,6 +126,7 @@ def summary() -> dict:
         "job": _job_compat(),
         "search_mode": _search_mode(),
         "storage": db.backend_info(),
+        "display_tz": db.display_tz(),
         "generated_at": db.now_iso(),
     }
 
