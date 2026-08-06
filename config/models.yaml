@@ -31,6 +31,13 @@ tiers:
 # retired by the provider). Retried ONCE before falling back to a loud [STUB].
 fallback_model: "meta/llama-3.1-8b-instruct"
 
+# Escalation target. 8b answers in ~3s but sometimes returns valid JSON with every
+# field null — which renders as "None/10 — n/a", output that looks like analysis and
+# says nothing. When that happens the judgement is retried ONCE here (slower, but it
+# fills the fields). If this one also comes back empty, the brief says [STUB] rather
+# than publishing nulls.
+strong_model: "thinkingmachines/inkling"
+
 generation:
   temperature: 1.0
   top_p: 0.95
