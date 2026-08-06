@@ -118,7 +118,14 @@ JUDGE_PROMPT = (
     "the meta-thesis ({meta}), plausible exit horizon in years, and a short thesis "
     "narrative saying why this could be one of the best deals available right now "
     "(founder, market, investors already in, traction, entry valuation). "
-    "Cite signal ids [S:n] for every factual claim. Be concise."
+    "Cite signal ids [S:n] for every factual claim. Be concise.\n\n"
+    "SCORING RULE — this matters more than filling the form: a score must be earned "
+    "by evidence in the context above. If the context says nothing about founders, "
+    "return null for founder_quality — do NOT award a number and then write 'no team "
+    "information available' next to it. A null with a stated reason is a useful answer; "
+    "a confident number with no evidence behind it is worse than saying nothing, because "
+    "a partner may act on it. The same rule applies to moat, TAM and meta-thesis fit. "
+    "Do not treat identifiers (CIK numbers, filing ids) as evidence of quality."
 )
 
 

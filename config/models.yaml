@@ -54,7 +54,11 @@ max_tokens_by_stage:
   chat: 1200
 
 limits:
-  max_briefs_per_day: 8
+  # Was 8, when a brief meant a slow flagship-tier call. Judging now runs on an 8b
+  # model in ~3s, so the cost that justified the cap is gone — and a cap of 8 left
+  # 22 of 30 pipeline companies with no brief at all, which reads as a broken tool
+  # rather than a deliberate budget.
+  max_briefs_per_day: 30
   # One attempt, hard-bounded. The client is created with max_retries=0 so this
   # is the true per-call ceiling; retries are handled (and logged) in llm.complete.
   request_timeout_seconds: 75
