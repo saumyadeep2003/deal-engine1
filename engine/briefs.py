@@ -282,11 +282,42 @@ def _existing_brief_is_stubbed(company_id: int) -> bool:
     # Scope to the judgment section ONLY. Stored commentary rows keep a [STUB]
     # sentiment marker from whenever they were harvested, and matching those would
     # mark every brief as needing repair — regenerating the same briefs every run.
-    marker = "## Judgment"
+    marker = "## Judgment" if "## Judgment" in md else "## What the AI makes of it"
     if marker not in md:
         return False
     judgment = md.split(marker, 1)[1].split("\n## ", 1)[0]
     return "[STUB" in judgment
+
+
+# Bump when the brief layout changes: stored briefs written by an older layout are
+# rewritten on the next run. Without this, a formatting improvement never reaches
+# the briefs a partner actually opens — they keep the layout they were born with.
+FORMAT_MARKER = "## At a glance"
+
+
+def _existing_brief_is_outdated(company_id: int) -> bool:
+    row = db.q1("SELECT content_md FROM briefs WHERE company_id=?"
+                " ORDER BY generated_at DESC, id DESC LIMIT 1", (company_id,))
+    md = row["content_md"] if row else None
+    return bool(md) and FORMAT_MARKER not in md
+
+
+def _stored_judgement(company_id: int) -> dict | None:
+    """The judgement already persisted on the latest score row. Regenerating a brief
+    without this would silently DOWNGRADE a brief that had real analysis back to
+    [STUB] just because the caller didn't happen to pass the dict in."""
+    row = db.q1("""SELECT features_json FROM scores WHERE company_id=?
+                   ORDER BY scored_at DESC, id DESC LIMIT 1""", (company_id,))
+    if not row or not row["features_json"]:
+        return None
+    try:
+        judged = (json.loads(row["features_json"]) or {}).get("judged")
+    except (json.JSONDecodeError, TypeError):
+        return None
+    if not isinstance(judged, dict):
+        return None
+    return judged if any(judged.get(k) not in (None, "", [])
+                         for k in ("founder_quality", "moat", "thesis_narrative")) else None
 
 
 def generate_brief(company_id: int, trigger: str = "on_demand",
@@ -300,13 +331,21 @@ def generate_brief(company_id: int, trigger: str = "on_demand",
     # must not be blocked by the daily cap: a brief written while the model was
     # unavailable would otherwise keep showing [STUB] all day even after the model
     # came back — which is exactly what happened on the hosted engine.
+    # Reuse a previously stored judgement ONLY when the engine could produce one
+    # today. With no key configured it must say [STUB] rather than presenting an
+    # older run's opinion as if judgement were currently available.
+    judged = judged or (None if llm.stubbed() else _stored_judgement(company_id))
     is_repair = bool(judged) and _existing_brief_is_stubbed(company_id)
-    if trigger == "auto_threshold" and not is_repair and today >= limits["max_briefs_per_day"]:
+    is_reformat = _existing_brief_is_outdated(company_id)
+    if (trigger == "auto_threshold" and not (is_repair or is_reformat)
+            and today >= limits["max_briefs_per_day"]):
         if verbose:
             print(f"  brief cap reached ({limits['max_briefs_per_day']}/day) — skipping auto brief")
         return None
     if is_repair:
         trigger = "stub_repair"
+    elif is_reformat:
+        trigger = "reformat"
     c = db.q1("SELECT * FROM companies WHERE id=?", (company_id,))
     if not c or c["is_synthetic"]:
         return None
