@@ -165,6 +165,7 @@ def _raw_complete(model: str, stage: str, system: str, user: str) -> str:
            or gen.get("max_tokens", 8192))
     _pace()
     resp = None
+    _tried_fallback = False
     for attempt in range(4):
         try:
             resp = _get_client().chat.completions.create(
@@ -177,14 +178,15 @@ def _raw_complete(model: str, stage: str, system: str, user: str) -> str:
             break
         except Exception as exc:  # noqa: BLE001 — provider outage must not kill a job
             msg = str(exc)
-            # A tier pointed at a model this provider doesn't serve should degrade to
-            # the model we know works, not stub the whole run. Config is editable by
-            # partners; a typo there must not look like an outage.
-            fallback = models_config()["tiers"].get("score")
-            if (("model" in msg.lower() and ("not found" in msg.lower() or "404" in msg))
-                    or "unknown model" in msg.lower()) and model != fallback and fallback:
-                print(f"  ~ model '{model}' unavailable for stage={stage} — falling back"
-                      f" to '{fallback}'")
+            # Any failure of the routed model — retired, mistyped, or simply too slow
+            # on this tier — degrades to the model we know answers, rather than
+            # stubbing. Measured: the 70B models time out here while 8b returns in ~3s,
+            # so "the big model is busy" must not cost the partner their analysis.
+            fallback = models_config().get("fallback_model") or models_config()["tiers"].get("score")
+            if fallback and model != fallback and not _tried_fallback:
+                _tried_fallback = True
+                print(f"  ~ model '{model}' failed for stage={stage} ({type(exc).__name__})"
+                      f" — retrying once with '{fallback}'")
                 model = fallback
                 continue
             rate_limited = "429" in msg or "rate" in msg.lower() or "quota" in msg.lower()

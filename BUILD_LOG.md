@@ -292,3 +292,12 @@ Chronological log of judgment calls made while building. Part of the deliverable
     diagnostic now supports `hard=true` (a judging-sized prompt, the only test that reflects
     the pipeline) and `model=` (probe any model without editing config and redeploying,
     turning a 4-minute deploy-and-hope loop into a 3-second question).
+46. **Model routing is now measured, not assumed.** Probed live against the provider with a
+    judging-sized prompt: `llama-3.1-8b-instruct` 3.1s (works), `inkling` 43.2s (works on the
+    probe, but real company contexts are larger and were exceeding 75s), `llama-3.1-70b` and
+    `llama-3.3-70b` both TIMED OUT at 75s — the free tier cannot serve the big models in
+    time. Routing moved to 8b for every stage: real, cited, slightly simpler analysis beats
+    both a [STUB] and a 13-minute search. The measurements are recorded in models.yaml so the
+    next person sees why, and `fallback_model` retries once when the routed model fails for
+    any reason (retired, mistyped, or busy) before stubbing. The one-line upgrade path back
+    to a larger model is a config edit the day a faster endpoint is available.

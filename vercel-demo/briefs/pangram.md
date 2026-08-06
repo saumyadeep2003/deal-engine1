@@ -1,6 +1,6 @@
 # Pangram — intelligence brief
 
-Generated: 2026-08-05T21:12:21Z | trigger: manual | recommendation: **Deep Dive**
+Generated: 2026-08-05T21:19:17Z | trigger: stub_repair | recommendation: **Deep Dive**
 
 ## Funding history
 
@@ -29,14 +29,14 @@ Generated: 2026-08-05T21:12:21Z | trigger: manual | recommendation: **Deep Dive*
 - [hackernews] [STUB: no API key — judgment unavailable] — “&gt; By the way, this is the method that uni professors have been using to catch students using LLMs to do homework. I'm curious how that wi” (https://news.ycombinator.com/item?id=49097123)
 ## Judgment (model-generated — labelled, distinct from observed data)
 
-- Founder quality: [STUB: no API key — judgment unavailable]
-- Moat / defensibility: [STUB: no API key — judgment unavailable]
-- TAM: [STUB: no API key — judgment unavailable]
-- Meta-thesis fit: [STUB: no API key — judgment unavailable]
-- Exit horizon: [STUB: no API key — judgment unavailable]
+- Founder quality: 8.0/10 — test [S:1]
+- Moat: 7.0/10 — test [S:1]
+- TAM: null (insufficient context — honest null beats an invented number)
+- Meta-thesis fit: 8.0/10 — test [S:1]
+- Exit horizon: 6.0 years
 
 ### Thesis narrative
-[STUB: no API key — judgment unavailable]
+test narrative [S:1]
 
 ## Comparable companies
 - Cohort is the 'unclassified' catch-all (sector not determined from the available text), so these are weak comparables:
