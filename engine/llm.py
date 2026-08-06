@@ -261,26 +261,19 @@ def _extract_json(text: str) -> dict | list | None:
         return None
 
 
-def complete_json(stage: str, system: str, user: str, schema_model, tier: str | None = None,
-                  model_override: str | None = None):
+def complete_json(stage: str, system: str, user: str, schema_model, tier: str | None = None):
     """Structured completion validated against a Pydantic model.
 
     Returns a validated model instance, or None (flagged to review_queue) when
     the model cannot produce valid output after one retry — or when stubbed.
-    `model_override` lets a caller escalate to a stronger model when the routed
-    one returns syntactically valid but empty output.
     """
     schema_desc = json.dumps(schema_model.model_json_schema(), indent=None)
-    sys_full = (f"{system}\n\nRespond with ONLY a JSON object matching this schema:\n"
-                f"{schema_desc}\n\nFill in every field you can support from the provided "
-                "context — a number where the schema asks for a number, prose where it asks "
-                "for prose. Use null ONLY when the context genuinely gives you nothing to go "
-                "on; a response of all-nulls is not a valid answer.")
+    sys_full = (f"{system}\n\nRespond with ONLY a JSON object matching this schema "
+                f"(all fields nullable — say null rather than guessing):\n{schema_desc}")
     if stubbed():
         _log(stage, "stub", 0, 0, stub=True)
         return None
-    raw = (_raw_complete(model_override, stage, sys_full, user) if model_override
-           else complete(stage, sys_full, user, tier=tier))
+    raw = complete(stage, sys_full, user, tier=tier)
     if is_stub(raw):          # provider unreachable — honest null, no review spam
         return None
     for attempt in range(2):
@@ -293,10 +286,10 @@ def complete_json(stage: str, system: str, user: str, schema_model, tier: str | 
         else:
             err = "no parseable JSON found"
         if attempt == 0:
-            retry_user = (f"{user}\n\nYour previous reply failed validation: {err}\n"
-                          f"Previous reply: {raw[:800]}\nReturn ONLY corrected JSON.")
-            raw = (_raw_complete(model_override, stage, sys_full, retry_user) if model_override
-                   else complete(stage, sys_full, retry_user, tier=tier))
+            raw = complete(stage, sys_full,
+                           f"{user}\n\nYour previous reply failed validation: {err}\n"
+                           f"Previous reply: {raw[:800]}\nReturn ONLY corrected JSON.",
+                           tier=tier)
     db.insert("review_queue", {"kind": "llm_parse_failure", "payload_json": json.dumps(
         {"stage": stage, "error": err, "raw": raw[:1000]}), "created_at": db.now_iso()})
     return None
