@@ -28,6 +28,8 @@ services:
                            # Without it: local SQLite, wiped on every restart.
       - key: NVIDIA_API_KEY
         sync: false        # set the value in the Render dashboard — never in the repo
+      - key: APIFY_TOKEN
+        sync: false        # optional: Apify Actors (see CONNECTORS.md)
       - key: RESEND_API_KEY
         sync: false        # optional
       - key: DIGEST_TO

@@ -87,9 +87,11 @@ sources:
     discovery:
       actor: "apify~google-search-scraper"
       max_results: 20
+      # Each query is one paid Actor run of 30-60s. 4 keeps a search under ~4 min
+      # and a free Apify plan alive; raise it once you are on a paid plan.
+      max_queries: 4
       queries:
         - "{theme} startup raises funding round"
-        - "{theme} startup seed round announced"
     enrichment:
       actor: "apify~website-content-crawler"
       max_pages: 3

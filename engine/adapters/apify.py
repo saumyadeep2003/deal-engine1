@@ -141,8 +141,12 @@ class ApifyAdapter(BaseAdapter):
         """Thesis themes × configured query templates. The fund's themes drive
         what is searched, so config/thesis.yaml stays the single source of intent."""
         templates = self.discovery.get("queries") or ["{theme} startup raises funding round"]
-        themes = [t["label"] for t in thesis().get("themes", [])][:8]
-        return [tpl.format(theme=th) for tpl in templates for th in themes] or templates
+        themes = [t["label"] for t in thesis().get("themes", [])]
+        queries = [tpl.format(theme=th) for tpl in templates for th in themes] or templates
+        # Every query is a paid Actor run taking 30-60s. Unbounded, 2 templates x 11
+        # themes would add ~15 minutes to a search and drain a free Apify plan in two
+        # runs. The cap is config, so a funded plan can simply raise it.
+        return queries[:int(self.discovery.get("max_queries", 4))]
 
     def fetch(self, since: datetime) -> list[Signal]:
         if not self.configured:
