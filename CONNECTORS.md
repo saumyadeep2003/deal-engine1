@@ -79,3 +79,38 @@ is wrong or empty — the table prints the exact name the engine looks for.
 The columns that were showing `— (requires Coresignal)` or `— (requires PitchBook)` will
 fill in on the next search. Nothing else changes: the same filter, the same scoring, the
 same provenance rules. More evidence in, better-supported judgments out.
+
+## Apify — scraped coverage without an enterprise contract
+
+`APIFY_TOKEN`. Sign up at <https://apify.com>, then **Settings → Integrations → API token**.
+The free tier's monthly credit runs a small demo; the paid Starter plan (~$39–49/month)
+covers real daily use. Set the token and the source switches itself on — no code change.
+
+What it adds once connected:
+
+- **Funding discovery beyond SEC filings.** A search Actor runs one query per fund theme
+  from `config/thesis.yaml`, and each real result becomes a signal with its URL. Amounts and
+  stages are extracted by the *same deterministic regex* the RSS and Hacker News adapters
+  use — a scraped headline is held to exactly the evidence standard as a Form D filing, and
+  a model is never asked what a number is.
+- **Self-reported team size and pricing pages**, by crawling the company's own website.
+  Stored as `self_reported_headcount` with confidence 0.5 and source `apify:<actor>`, because
+  a company's About page is weaker evidence than Coresignal's measured headcount. When the
+  site says nothing, the field records *why* rather than staying mysteriously blank.
+
+Configure Actors in `config/sources.yaml` under the `apify` entry — Actor ids, queries and
+page limits are data, so trying a different Store Actor never touches Python.
+
+### What is deliberately NOT wired, and why
+
+LinkedIn and X Actors exist on the Apify Store, and they would fill the headcount and
+GP-attention gaps cheaply. They are **intentionally excluded**: both platforms prohibit
+scraping in their terms of service. For a personal project that is your call to make; for a
+tool handed to a fund — an entity with compliance obligations — it is a liability that costs
+more than the subscription it saves. The licensed routes for exactly that data (Coresignal,
+the official X API) are already wired in `licensed.py` and need only their env var.
+
+### Verifying
+
+`POST /api/apify/test` (or the dashboard) makes one cheap call to Apify's `users/me` and
+reports the account and plan, or names the failure — token rejected, or unreachable.

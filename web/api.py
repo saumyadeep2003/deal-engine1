@@ -148,6 +148,7 @@ UNLOCKS = {
     "podcasts": "investor commentary from podcast transcripts",
     "substack_threads": "investor newsletter commentary",
     "the_information": "scoop-level reporting on rounds and hires",
+    "apify": "web-scraped funding mentions, self-reported team size and pricing pages",
 }
 
 
@@ -483,6 +484,14 @@ def llm_test(model: str | None = None, hard: bool = False) -> dict:
     prompt, which is the only test that reflects what the pipeline actually does."""
     _budget_or_429("llm_test")
     return llm.self_test(model_override=model, hard=hard)
+
+
+@app.post("/api/apify/test")
+def apify_test() -> dict:
+    """Check the Apify token with one cheap call, and say exactly what came back."""
+    _budget_or_429("llm_test")
+    from engine.adapters.apify import self_test as apify_self_test
+    return apify_self_test()
 
 
 @app.get("/api/run/plan")
