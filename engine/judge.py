@@ -210,11 +210,36 @@ def run_judged_scoring(max_companies: int | None = None, verbose: bool = True,
     cap = max_companies if max_companies is not None else JUDGE_TOP_N
     rows = db.q("SELECT id FROM companies WHERE is_synthetic=0 AND status IN"
                 " ('pipeline','hot','watchlist')")
-    ranked = sorted(((r["id"], composite_from_features(computed_features(r["id"])))
-                     for r in rows), key=lambda x: -x[1])[:cap]
+    ranked_all = sorted(((r["id"], composite_from_features(computed_features(r["id"])))
+                         for r in rows), key=lambda x: -x[1])
+
+    # The cap used to be applied to the ranking BEFORE checking the cache, which
+    # meant the budget was spent on the same top ten every run — and because their
+    # judgements were still valid, every one was served from cache. Ten model calls
+    # of headroom went unused while a hundred and fifty companies were never judged
+    # at all. Coverage was frozen by design, and it looked like a working system.
+    #
+    # So: reuse every valid judgement (free), then spend the budget on the
+    # highest-ranked companies that do NOT have one. Each search now advances
+    # coverage by up to `cap` companies, and a company whose evidence changes is
+    # re-judged automatically because its fingerprint no longer matches.
     results: dict[int, dict] = {}
     reused = 0
     stub = llm.stubbed()
+    pending: list[tuple[int, float]] = []
+    if not stub:
+        for cid, score in ranked_all:
+            cached = _cached_judgement(cid)
+            if cached is None:
+                pending.append((cid, score))
+                continue
+            reused += 1
+            if cached.get("is_venture_relevant") is False:
+                db.execute("UPDATE companies SET status='filtered' WHERE id=?", (cid,))
+                continue
+            results[cid] = cached
+    ranked = pending[:cap]
+    remaining = max(0, len(pending) - len(ranked))
     for i, (cid, _) in enumerate(ranked, start=1):
         if stub:
             break
@@ -224,14 +249,7 @@ def run_judged_scoring(max_companies: int | None = None, verbose: bool = True,
                 progress_cb(i, len(ranked), row["name"] if row else f"#{cid}")
             except Exception:  # noqa: BLE001 — progress must never break judging
                 pass
-        cached = _cached_judgement(cid)
-        if cached is not None:
-            reused += 1
-            if cached.get("is_venture_relevant") is False:
-                db.execute("UPDATE companies SET status='filtered' WHERE id=?", (cid,))
-                continue
-            results[cid] = cached
-            continue
+        # every id here is already known to lack a valid judgement
         judged = assess_company(cid)
         if not judged:
             continue
@@ -241,9 +259,14 @@ def run_judged_scoring(max_companies: int | None = None, verbose: bool = True,
             continue
         results[cid] = judged
     if verbose:
-        mode = f"STUB (no {llm.api_key_env_name()} — computed-only scoring, judgment fields read [STUB])" \
-            if stub else (f"judged {len(results)}/{len(ranked)} survivors"
-                          f" ({reused} reused unchanged, "
-                          f"{len(ranked) - reused} model call(s))")
+        if stub:
+            mode = (f"STUB (no {llm.api_key_env_name()} — computed-only scoring, "
+                    "judgment fields read [STUB])")
+        else:
+            covered = len(results)
+            mode = (f"{len(ranked)} newly judged, {reused} reused unchanged — "
+                    f"{covered}/{len(ranked_all)} survivors now carry a judgement"
+                    + (f"; {remaining} still waiting (raise JUDGE_TOP_N to go faster)"
+                       if remaining else "; full coverage"))
         print(f"  judged scoring: {mode}")
     return results

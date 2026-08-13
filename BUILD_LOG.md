@@ -516,3 +516,39 @@ Chronological log of judgment calls made while building. Part of the deliverable
     than re-sent every sync, and a 429 is retried with backoff because a per-minute quota is
     a "wait", not a "no" — failing the sync and telling the user their credentials are broken
     would have been the third wrong diagnosis of the same afternoon.
+63. **The engine was collecting hiring data and throwing it away.** `ats_boards` had been
+    storing real `open_roles` signals for days, and `hiring_velocity()` / `team_trend()` were
+    dead code — nothing read them. Every brief still printed "Headcount / 6-month growth: —
+    (requires Coresignal)" for companies whose job board the engine had read that morning,
+    and the workbook's Headcount column did the same. Data gathered and never surfaced is
+    worse than data never gathered: it costs the requests and teaches the reader the system
+    knows less than it does. `engine/hiring.py` is now the single place the rest of the
+    system asks, and it feeds the At-a-glance table, the team section, the "what this brief
+    can't tell you" list (which no longer claims hiring is missing when it is not) and the
+    two Excel columns. The licence gap is still stated — open roles are a *leading* indicator
+    and not a headcount, and the wording says so wherever the number appears.
+64. **Coverage was frozen at ten companies and it looked like a working system.**
+    `run_judged_scoring` took the top ten by composite, then checked the cache — and because
+    those ten already had valid judgements, all ten were served from cache. Ten model calls
+    of headroom went unused every single search while a hundred and fifty companies were
+    never judged at all. The fix inverts the order: reuse every valid judgement first (free),
+    then spend the budget on the highest-ranked companies that do NOT have one. Each search
+    now advances coverage by up to `JUDGE_TOP_N`, re-judging happens automatically when a
+    company's evidence fingerprint changes, and the log line reports coverage as a fraction
+    with the number still waiting.
+65. **A cap nobody can see is indistinguishable from a bug.** `/api/coverage` reports, per
+    stage, how many of the companies that COULD have something actually do — and names the
+    setting that limits it. "Ten companies have an AI assessment" reads as broken; "ten of a
+    hundred and sixty, capped by JUDGE_TOP_N=10, advancing by ten per search" reads as a
+    dial. One detail mattered more than it looks: the per-company counts have to be scoped to
+    companies still in the pipeline, because evidence rows outlive the companies they belong
+    to — unscoped, enrichment reported "43 of 36 = 119%", and a single impossible number
+    discredits every other row in the table beside it.
+66. **Bluesky returned zero for its whole first run, and the reason was in the query.** It
+    searched the theme LABEL — "Robotics & Physical AI funding round" — a phrase written for
+    a fund's own documents that nobody has ever posted on a social network. It now searches
+    the short keywords each theme already carries for the deterministic filter, which are the
+    words people actually use ("robotics raised", "synthetic data seed round"). ats_boards
+    went 25 -> 60 companies and wayback 10 -> 25: both are free, key-free endpoints where the
+    only cost is wall-clock, and the old caps were why hiring data existed for a handful of
+    companies and "requires Coresignal" for everyone else.

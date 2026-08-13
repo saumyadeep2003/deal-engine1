@@ -20,7 +20,7 @@ from openpyxl.utils import get_column_letter
 
 import sys
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from engine import db, scoring  # noqa: E402
+from engine import db, hiring as hiring_mod, scoring  # noqa: E402
 from engine.config import OUTPUT_DIR, thesis  # noqa: E402
 
 WORKBOOK = OUTPUT_DIR / "deal_pipeline.xlsx"
@@ -151,9 +151,15 @@ def _pipeline_row(c: dict) -> list:
     growth = db.q1("SELECT value_json, unavailable_reason FROM enrichment_cache"
                    " WHERE company_id=? AND field='headcount_growth_6m'", (cid,))
 
-    def gated(row) -> str:
+    def gated(row, free_fallback: str | None = None) -> str:
+        """Licensed value if we have it, else what the FREE sources found, else the
+        honest gap. The middle case was missing: the engine was collecting a
+        company's open roles from its own job board and still printing
+        '— (requires Coresignal)' in this cell, which understates the system."""
         if row and row["value_json"]:
             return json.loads(row["value_json"])
+        if free_fallback:
+            return free_fallback
         if row and row["unavailable_reason"]:
             return f"— ({row['unavailable_reason']})"
         return "—"
@@ -176,8 +182,8 @@ def _pipeline_row(c: dict) -> list:
         _fmt_money(val) if val else "— (requires PitchBook)",
         (rnd["lead"] if rnd and rnd["lead"] else "— (not disclosed)"),
         tier1,
-        gated(headcount),
-        gated(growth),
+        gated(headcount, hiring_mod.summary_line(cid)),
+        gated(growth, hiring_mod.growth_cell(cid) if hiring_mod.hiring(cid)["available"] else None),
         f"{c['percentile']:.0f}th pct of {c['cohort_size']} in {c['cohort_key']}{lc}",
         c.get("sector") or "—",
         (c.get("last_signal_at") or "")[:10],
@@ -356,7 +362,9 @@ def write_workbook(verbose: bool = True) -> Path:
     prov("Lead investor", ["rss_news"], "regex 'led by …' from real articles")
     prov("Tier 1 count", ["edgar_formd", "rss_news"],
          "observed investments × config tier list — arithmetic, never a model")
-    prov("Headcount / 6-month growth", ["coresignal"], "null until Coresignal licence")
+    prov("Headcount / 6-month growth", ["ats_boards", "wayback_team", "coresignal"],
+         "open roles from the company's own public job board + team-page history from the "
+         "Internet Archive; verified headcount still needs Coresignal")
     prov("Thesis score", ["edgar_formd", "rss_news", "hn", "github_trending"],
          "computed features -> percentile within (sector,stage) cohort")
     prov("Investor commentary", ["hn", "reddit", "x_gp_watchlist", "blind", "podcasts"],

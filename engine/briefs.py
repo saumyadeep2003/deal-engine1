@@ -14,7 +14,7 @@ from __future__ import annotations
 import json
 import re
 
-from . import db, gatekeeper, judge, llm
+from . import db, gatekeeper, hiring as hiring_mod, judge, llm
 from .config import OUTPUT_DIR, models_config, thesis
 
 BRIEFS_DIR = OUTPUT_DIR / "briefs"
@@ -114,7 +114,12 @@ def _at_a_glance(company_id: int, c, score, rec: str) -> str:
         # date only, so no clock label — "25 Jul 2026 IST" reads like a bug
         ("Last sign of activity", db.to_display(c["last_signal_at"], fmt="%d %b %Y",
                                                 with_label=False)),
-        ("Headcount & growth", "— (requires Coresignal)"),
+        # Free sources answer a version of the Coresignal question. Printing the
+        # licence gap while the engine holds this company's open roles would be
+        # the system under-reporting itself.
+        ("Hiring & growth", hiring_mod.summary_line(company_id)
+         or "— no public job board or archived team page found (full headcount"
+            " history requires Coresignal)"),
     ]
     out = ["\n## At a glance\n", "| | |", "|---|---|"]
     out += [f"| {k} | {v} |" for k, v in rows]
@@ -124,7 +129,14 @@ def _at_a_glance(company_id: int, c, score, rec: str) -> str:
 def _gaps_section(company_id: int) -> str:
     """What this brief cannot tell you, stated plainly. A partner who knows the
     shape of the hole reads the rest correctly; one who doesn't over-trusts it."""
-    gaps = ["Headcount, hiring growth and runway — requires Coresignal",
+    gaps = []
+    if not hiring_mod.hiring(company_id)["available"]:
+        gaps.append("Hiring and team growth — no public job board or archived team page "
+                    "found for this company; verified headcount requires Coresignal")
+    else:
+        gaps.append("Verified headcount and runway — requires Coresignal (open roles above "
+                    "are a leading indicator, not a headcount)")
+    gaps += [
             "Full cap table, valuation and complete funding history — requires PitchBook",
             "What investors are saying privately (X, Blind, podcasts, Substack) — requires those licences"]
     if not db.q1("SELECT id FROM founders WHERE company_id=? LIMIT 1", (company_id,)):
@@ -186,7 +198,33 @@ def _observed_sections(company_id: int) -> str:
     if careers and careers["value_json"]:
         out.append(f"- Careers-page function mix: {careers['value_json']} [computed]"
                    f" (source: {careers['source']})")
-    out.append("- Headcount / 6-month growth: — (requires Coresignal)")
+    hire = hiring_mod.hiring(company_id)
+    if hire["available"]:
+        if hire.get("open_roles") is not None:
+            line = (f"- Hiring now: {hire['open_roles']} open role(s) on their own"
+                    f" {hire['source']} board [computed] ({hire['url']})")
+            if hire.get("change") is not None:
+                line += (f" — {hire['change']:+d} since"
+                         f" {(hire.get('change_since') or '')[:10]} [computed]")
+            elif hire.get("change_reason"):
+                line += f" — {hire['change_reason']}"
+            out.append(line)
+        if hire.get("function_mix"):
+            out.append("- What they are hiring for: "
+                       + ", ".join(f"{k} ({v})" for k, v in
+                                   sorted(hire["function_mix"].items(), key=lambda kv: -kv[1]))
+                       + " [computed] (a fund reads a research-heavy mix differently"
+                         " from a sales-heavy one)")
+        if hire.get("sample_titles"):
+            out.append("- Open roles include: " + "; ".join(hire["sample_titles"][:6]))
+        if hire.get("team_now") is not None:
+            out.append(f"- Team page listed {hire['team_then']} people, now"
+                       f" {hire['team_now']} ({hire['team_window']}) [computed]"
+                       f" — confidence {hire.get('team_confidence')}:"
+                       f" {hire.get('caveat')}")
+    else:
+        out.append(f"- Hiring: {hire['reason']}")
+    out.append("- Verified headcount and 6-month growth: — (requires Coresignal)")
 
     out.append("\n## Signs of traction\n")
     for field, label in (("github_stars", "GitHub stars"),

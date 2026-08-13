@@ -190,6 +190,16 @@ def main() -> int:
           f"commit {v.get('commit') if isinstance(v, dict) else '?'}, missing="
           f"{v.get('missing') if isinstance(v, dict) else '?'}")
 
+    # D17 — coverage is reported with its denominator AND its cap. A bare "10
+    # companies analysed" is indistinguishable from a bug; "10 of 160, capped by
+    # JUDGE_TOP_N" is a dial. No stage may report more than 100%.
+    c, cov = get("/api/coverage")
+    stages = cov.get("stages", []) if isinstance(cov, dict) else []
+    sane = all(0 <= s["pct"] <= 100 and s.get("cap") for s in stages)
+    check("D17 coverage names its denominator and its limiting cap for every stage",
+          c == 200 and len(stages) >= 8 and sane,
+          f"{len(stages)} stages; {cov.get('headline', '')[:80] if isinstance(cov, dict) else ''}")
+
     # D12 — scheduler live in-process, honouring the search mode:
     # auto = the full job set; manual = housekeeping only, searches via button.
     log = ROOT / "logs" / "engine.out.log"

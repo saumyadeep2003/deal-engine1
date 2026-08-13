@@ -53,12 +53,27 @@ class BlueskyAdapter(BaseAdapter):
         self.max_queries = int(self.cfg.get("max_queries", 4))
         self.limit = int(self.cfg.get("limit", 25))
 
+    @staticmethod
+    def _keywords() -> list[str]:
+        """Short, searchable terms from each theme.
+
+        A theme LABEL is written for a fund's own documents — "Robotics & Physical
+        AI" — and nobody posts that phrase. Searching it returned zero results for
+        this source's entire first run. The keywords a theme already carries for
+        the deterministic filter are exactly the words people do use, so they are
+        what gets searched; the label is only a fallback."""
+        out: list[str] = []
+        for t in thesis().get("themes", []):
+            kws = [k for k in (t.get("keywords") or []) if 3 < len(k) < 24]
+            out.extend(kws[:2] or [t.get("label", "")])
+        return [k for k in out if k]
+
     def _queries(self) -> list[str]:
         """Thesis themes drive the search, same as every other source, so what the
         engine listens for stays defined in one place (config/thesis.yaml)."""
-        templates = self.cfg.get("queries") or ["{theme} funding round"]
-        themes = [t["label"] for t in thesis().get("themes", [])]
-        qs = [tpl.format(theme=th) for tpl in templates for th in themes]
+        templates = self.cfg.get("queries") or ["{keyword} raised"]
+        kws = self._keywords()
+        qs = [tpl.format(keyword=k, theme=k) for tpl in templates for k in kws]
         return qs[:self.max_queries]
 
     def fetch(self, since: datetime) -> list[Signal]:

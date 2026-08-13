@@ -452,6 +452,19 @@ details.explain p { color:var(--ink-2); font-size:12.5px; margin:6px 0 0; }
   </div>
 </div>
 
+<!-- Coverage: the caps in this engine are deliberate, but a cap nobody can see
+     is indistinguishable from a bug. Naming the limiter next to the number turns
+     "only 10 companies were analysed" into a dial the fund can turn. -->
+<div class="card" id="covCard">
+  <div class="chead">
+    <div>
+      <h2>📊 How much has actually been analysed</h2>
+      <div class="csub" id="covHead"></div>
+    </div>
+  </div>
+  <div class="scroll" style="max-height:360px"><table id="covTable"></table></div>
+</div>
+
 <!-- Connections: passive health says "it worked at some point". This says
      "it works now, because you just pressed a button and watched it answer." -->
 <div class="card" id="connCard">
@@ -947,6 +960,31 @@ function drawSources(sources) {
     "No sources registered.");
 }
 
+
+
+/* ------------------------------------------------------------------ coverage */
+async function drawCoverage() {
+  let d;
+  try { d = await (await fetch("/api/coverage")).json(); } catch (e) { return; }
+  $("#covHead").textContent = d.headline + "  Every figure below is out of the companies "
+    + "that could have it, next to the setting that limits it.";
+  const bar = pct => {
+    const w = el("div", {});
+    w.style.cssText = "height:8px;border-radius:4px;background:" + css("--line")
+      + ";overflow:hidden;min-width:80px";
+    const f = el("div", {});
+    f.style.cssText = "height:100%;width:" + Math.min(100, pct) + "%;background:"
+      + css(pct >= 90 ? "--good" : pct >= 40 ? "--serious" : "--critical");
+    w.appendChild(f); return w;
+  };
+  mount2("#covTable", tableFrom(
+    [{ label: "Stage" }, { label: "Covered", num: true }, { label: "" },
+     { label: "What it means" }, { label: "What limits it" }],
+    (d.stages || []).map(s => [
+      s.stage, `${s.have} / ${s.eligible}`, { node: bar(s.pct) }, s.meaning,
+      s.cap + (s.blocked_by ? " — " + s.blocked_by : "")])),
+    "Nothing analysed yet — run a search.");
+}
 
 /* ---------------------------------------------------------- connections panel
    Passive health answers "did this work at some point". These buttons answer
@@ -1615,6 +1653,7 @@ async function loadAll() {
   drawRecMix(s.recommendations);
   drawSources(s.sources);
   drawConnections(null);
+  drawCoverage();
 
   const sec = await (await fetch("/api/sectors")).json();
   drawSectors(sec.rows);

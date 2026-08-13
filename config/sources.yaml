@@ -78,7 +78,10 @@ sources:
     adapter: engine.adapters.ats_boards.AtsBoardsAdapter
     interval_minutes: 720
     requires_license: false
-    max_companies: 25
+    # 25 covered only the very top of the pipeline, so hiring data existed for a
+    # handful of companies and the brief said "requires Coresignal" for the rest.
+    # These are free, key-free endpoints; the only cost is wall-clock.
+    max_companies: 60
     notes: "Greenhouse/Lever/Ashby public job boards — open roles + function mix.
       Coresignal substitute: a leading indicator of growth rather than a headcount."
 
@@ -86,10 +89,16 @@ sources:
     adapter: engine.adapters.bluesky.BlueskyAdapter
     interval_minutes: 240
     requires_license: false
-    max_queries: 4
+    max_queries: 8
     limit: 25
+    # Theme LABELS are long ("Robotics & Physical AI"); a social search for the
+    # whole phrase plus "funding round" matched literally nothing, which is why
+    # this source returned zero for its first two days. Short, human phrasings are
+    # what people actually post.
     queries:
-      - "{theme} funding round"
+      - "{keyword} raised"
+      - "{keyword} seed round"
+      - "led our seed in {keyword}"
     # Add the Bluesky handles of investors you track (no @). The X handles in
     # config/thesis.yaml stay put for the day an X API budget exists.
     handles: []
@@ -99,7 +108,7 @@ sources:
     adapter: engine.adapters.wayback.WaybackAdapter
     interval_minutes: 10080
     requires_license: false
-    max_companies: 10
+    max_companies: 25
     notes: "Team growth from archived copies of a company's own team page.
       Reads the Internet Archive, never LinkedIn itself."
 

@@ -641,6 +641,18 @@ def llm_test(model: str | None = None, hard: bool = False) -> dict:
     return llm.self_test(model_override=model, hard=hard)
 
 
+@app.get("/api/coverage")
+def coverage_report() -> dict:
+    """How much of the pipeline has actually been analysed, and what caps the rest.
+
+    Every stage here is deliberately capped — each costs money or somebody's rate
+    limit — but an invisible cap is indistinguishable from a bug. "Ten companies
+    have an AI assessment" reads as broken; "ten of a hundred and sixty, because
+    JUDGE_TOP_N is ten" reads as a dial."""
+    from engine import coverage
+    return coverage.report()
+
+
 @app.get("/api/connections")
 def connections_list() -> dict:
     """Everything this engine depends on, in one place, each with a way to test it."""

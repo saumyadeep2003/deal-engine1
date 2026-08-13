@@ -65,6 +65,8 @@ def features() -> dict:
         "wayback_team": _has("engine.adapters.wayback", "WaybackAdapter"),
         "digest_recipient_editable": _has("outputs.email_send", "set_recipients"),
         "ist_timestamps": _has("engine.db", "to_display"),
+        "hiring_from_free_sources": _has("engine.hiring", "summary_line"),
+        "coverage_report": _has("engine.coverage", "report"),
     }
 
 
