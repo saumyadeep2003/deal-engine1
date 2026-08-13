@@ -13,7 +13,7 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from engine import db, llm  # noqa: E402
+from engine import db, gatekeeper, llm  # noqa: E402
 from engine.filters import match_theme, theme_regexes  # noqa: E402
 from engine.sectors import scan_thesis, _tokens  # noqa: E402
 
@@ -81,9 +81,14 @@ def commentary_about(company_text: str) -> str:
         lines.append(f"  - [{r['platform']}] ({r['sentiment']}) “{(r['quote'] or '')[:160]}”"
                      f"{_cite(r['url'], r['observed_at'])}")
     if not llm.stubbed():
+        quotes = "\n".join(r["quote"] or "" for r in rows)
         summary = llm.complete("chat", "Summarise the sentiment in these real quotes in 2 lines. "
-                               "Do not add facts not present.",
-                               "\n".join(r["quote"] or "" for r in rows), tier="chat")
+                               "Do not add facts not present.", quotes, tier="chat")
+        # a summary of quotes may only contain what the quotes contain
+        summary, removed = gatekeeper.verify_text(
+            summary, gatekeeper.evidence_from_text(quotes, comp["name"],
+                                                   company_id=comp["id"]))
+        gatekeeper.record(comp["id"], "chat_commentary", removed)
         lines.append(f"  Summary: {summary}")
     return "\n".join(lines)
 
@@ -155,6 +160,11 @@ def answer(q: str) -> str:
     resp = llm.complete("chat", "Answer the partner's question ONLY from this evidence; cite "
                         "the given urls/dates; say so plainly if the evidence is insufficient.",
                         f"Question: {q}\nEvidence:\n{ctx}", tier="chat")
+    # The answer is allowed to be a rearrangement of ctx and nothing more. Chat is
+    # where a partner is most likely to act on a single sentence without opening
+    # the brief behind it, so it gets the same gate as anything written to disk.
+    resp, removed = gatekeeper.verify_text(resp, gatekeeper.evidence_from_text(ctx, q))
+    gatekeeper.record(0, "chat_answer", removed, ref=q[:120])
     return resp + "\nSources:\n" + ctx
 
 

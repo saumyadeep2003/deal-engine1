@@ -70,6 +70,65 @@ sources:
     notes: "Brief §5 'Company surface area' — product positioning, customer logos
       (from author-written alt text), pricing page + plan names. Post-filter only."
 
+  # ---- Free, permitted substitutes for the paid vendors --------------------
+  # Each of these exists to be read: documented, key-free, and nobody's terms are
+  # strained by using them. Together they cover the parts of Coresignal and X that
+  # actually drive decisions — is the team growing, and what are GPs looking at.
+  - name: ats_boards
+    adapter: engine.adapters.ats_boards.AtsBoardsAdapter
+    interval_minutes: 720
+    requires_license: false
+    max_companies: 25
+    notes: "Greenhouse/Lever/Ashby public job boards — open roles + function mix.
+      Coresignal substitute: a leading indicator of growth rather than a headcount."
+
+  - name: bluesky
+    adapter: engine.adapters.bluesky.BlueskyAdapter
+    interval_minutes: 240
+    requires_license: false
+    max_queries: 4
+    limit: 25
+    queries:
+      - "{theme} funding round"
+    # Add the Bluesky handles of investors you track (no @). The X handles in
+    # config/thesis.yaml stay put for the day an X API budget exists.
+    handles: []
+    notes: "AT Protocol public appview — GP attention without a paid X tier."
+
+  - name: wayback_team
+    adapter: engine.adapters.wayback.WaybackAdapter
+    interval_minutes: 10080
+    requires_license: false
+    max_companies: 10
+    notes: "Team growth from archived copies of a company's own team page.
+      Reads the Internet Archive, never LinkedIn itself."
+
+  # ---- Apify: public-web Actors. Not a licence, just an API token. ----------
+  # Fills part of the gap the enterprise vendors own (traction, self-reported
+  # team size, coverage beyond SEC filings) for ~$40/mo instead of ~$40k/yr.
+  # Actor ids and queries are DATA: swap an Actor without touching Python.
+  # Deliberately excluded: LinkedIn and X Actors. Both platforms prohibit
+  # scraping in their terms; licensed routes for that data are wired in
+  # licensed.py (Coresignal, X API). A tool handed to a fund should not carry
+  # that liability to save a subscription.
+  - name: apify
+    adapter: engine.adapters.apify.ApifyAdapter
+    interval_minutes: 720
+    requires_license: false
+    env_key: APIFY_TOKEN
+    notes: "Apify Actors — funding discovery via search + company self-description crawl."
+    discovery:
+      actor: "apify~google-search-scraper"
+      max_results: 20
+      # Each query is one paid Actor run of 30-60s. 4 keeps a search under ~4 min
+      # and a free Apify plan alive; raise it once you are on a paid plan.
+      max_queries: 4
+      queries:
+        - "{theme} startup raises funding round"
+    enrichment:
+      actor: "apify~website-content-crawler"
+      max_pages: 3
+
   # ---- Licensed sources: identical interface, wired end-to-end, return LicenseRequired ----
   - name: pitchbook
     adapter: engine.adapters.licensed.PitchBookAdapter

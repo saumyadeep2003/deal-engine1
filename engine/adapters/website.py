@@ -39,6 +39,17 @@ class WebsiteAdapter(BaseAdapter):
     interval_minutes = 1440
     max_companies = 10
 
+    def probe(self) -> dict:
+        """The real code path, against exactly one company. Probing the full
+        company list would make a diagnostic slower than the ingest it is meant
+        to reassure you about."""
+        prev = self.max_companies
+        self.max_companies = 1
+        try:
+            return super().probe()
+        finally:
+            self.max_companies = prev
+
     def fetch(self, since: datetime) -> list[Signal]:
         rows = db.q("""SELECT id, name, domain FROM companies
                        WHERE domain IS NOT NULL AND domain NOT LIKE '%.example'

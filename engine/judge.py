@@ -118,19 +118,52 @@ JUDGE_PROMPT = (
     "the meta-thesis ({meta}), plausible exit horizon in years, and a short thesis "
     "narrative saying why this could be one of the best deals available right now "
     "(founder, market, investors already in, traction, entry valuation). "
-    "Cite signal ids [S:n] for every factual claim. Be concise."
+    "Cite signal ids [S:n] for every factual claim. Be concise.\n\n"
+    "SCORING RULE — this matters more than filling the form: a score must be earned "
+    "by evidence in the context above. If the context says nothing about founders, "
+    "return null for founder_quality — do NOT award a number and then write 'no team "
+    "information available' next to it. A null with a stated reason is a useful answer; "
+    "a confident number with no evidence behind it is worse than saying nothing, because "
+    "a partner may act on it. The same rule applies to moat, TAM and meta-thesis fit. "
+    "Do not treat identifiers (CIK numbers, filing ids) as evidence of quality."
 )
+
+
+JUDGED_CORE = ("founder_quality", "moat", "meta_thesis_fit", "thesis_narrative")
+
+
+def _is_empty_judgement(out: dict | None) -> bool:
+    """Valid JSON with every meaningful field null is NOT an answer. A small model
+    will happily return that, and it renders as 'None/10 — n/a' in a brief: output
+    that looks like analysis while saying nothing. Worse than a loud [STUB]."""
+    if not out or out.get("is_venture_relevant") is False:
+        return False                     # a considered rejection is a real answer
+    return all(out.get(k) in (None, "", []) for k in JUDGED_CORE)
 
 
 def assess_company(company_id: int) -> dict | None:
     """One call: screen + judge. Returns the judged dict, or {'is_venture_relevant':
-    False} for a rejected entity, or None when stubbed/unparseable."""
-    res = llm.complete_json("score", JUDGE_PROMPT.format(meta=thesis()["fund"]["meta_thesis"]),
-                            _context(company_id), ScreenedJudgement, tier="score")
-    if res is None:
-        return None
-    out = res.model_dump()
-    out["model"] = models_config()["tiers"]["score"]
+    False} for a rejected entity, or None when stubbed/unparseable.
+
+    If the routed (fast) model returns an empty judgement, escalate ONCE to the
+    stronger model rather than publishing nulls dressed as analysis."""
+    system = JUDGE_PROMPT.format(meta=thesis()["fund"]["meta_thesis"])
+    ctx = _context(company_id)
+    res = llm.complete_json("score", system, ctx, ScreenedJudgement, tier="score")
+    out = res.model_dump() if res is not None else None
+    model_used = models_config()["tiers"]["score"]
+
+    strong = models_config().get("strong_model")
+    if strong and strong != model_used and (out is None or _is_empty_judgement(out)):
+        print(f"  ~ empty judgement from {model_used} — escalating once to {strong}")
+        res2 = llm.complete_json("score", system, ctx, ScreenedJudgement,
+                                 model_override=strong)
+        if res2 is not None and not _is_empty_judgement(res2.model_dump()):
+            out, model_used = res2.model_dump(), strong
+
+    if out is None or _is_empty_judgement(out):
+        return None                      # nothing usable — the brief will say [STUB]
+    out["model"] = model_used
     return out
 
 

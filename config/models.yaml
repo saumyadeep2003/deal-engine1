@@ -10,15 +10,33 @@ provider:
 # cheaper small model you trust, point `classify` at it and the funnel economics
 # improve without touching code. (Former z.ai config: base_url
 # https://api.z.ai/api/openai/v1, key ZAI_API_KEY, tiers glm-4-flash/air/plus.)
-# `classify` and `chat` are quick, high-volume, low-judgment calls: a reasoning
-# model spends 15-30s thinking about a question a small instruct model answers in
-# about a second. `score` and `brief` are where the reasoning is worth paying for.
-# Swap any line to change model routing — no code touches a model name.
+# Routing is MEASURED, not assumed. Probed live against this provider with a real
+# judging-sized prompt (POST /api/llm/test?hard=true&model=...):
+#   meta/llama-3.1-8b-instruct    3.1s   works
+#   thinkingmachines/inkling     43.2s   works, but marginal — real company contexts
+#                                        are larger than the probe and exceeded 75s
+#   meta/llama-3.1-70b-instruct  75s+    TIMED OUT — unusable on this tier
+#   meta/llama-3.3-70b-instruct  75s+    TIMED OUT — unusable on this tier
+# So the free tier cannot serve the big models in time, and a 43s-per-company judging
+# pass is what made searches take 13 minutes. 8b is the model that actually answers.
+# Real, cited, slightly simpler analysis beats a [STUB] every time — and beats a
+# timeout. Swap any line to change routing; no code contains a model name.
 tiers:
   classify: "meta/llama-3.1-8b-instruct"
-  score: "thinkingmachines/inkling"
-  brief: "thinkingmachines/inkling"
+  score: "meta/llama-3.1-8b-instruct"
+  brief: "meta/llama-3.1-8b-instruct"
   chat: "meta/llama-3.1-8b-instruct"
+
+# Last resort when the routed model fails for any reason (timeout, outage, a model
+# retired by the provider). Retried ONCE before falling back to a loud [STUB].
+fallback_model: "meta/llama-3.1-8b-instruct"
+
+# Escalation target. 8b answers in ~3s but sometimes returns valid JSON with every
+# field null — which renders as "None/10 — n/a", output that looks like analysis and
+# says nothing. When that happens the judgement is retried ONCE here (slower, but it
+# fills the fields). If this one also comes back empty, the brief says [STUB] rather
+# than publishing nulls.
+strong_model: "thinkingmachines/inkling"
 
 generation:
   temperature: 1.0
@@ -36,7 +54,11 @@ max_tokens_by_stage:
   chat: 1200
 
 limits:
-  max_briefs_per_day: 8
+  # Was 8, when a brief meant a slow flagship-tier call. Judging now runs on an 8b
+  # model in ~3s, so the cost that justified the cap is gone — and a cap of 8 left
+  # 22 of 30 pipeline companies with no brief at all, which reads as a broken tool
+  # rather than a deliberate budget.
+  max_briefs_per_day: 30
   # One attempt, hard-bounded. The client is created with max_retries=0 so this
   # is the true per-call ceiling; retries are handled (and logged) in llm.complete.
   request_timeout_seconds: 75

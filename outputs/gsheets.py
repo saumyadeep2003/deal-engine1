@@ -17,6 +17,7 @@ Env:
 """
 from __future__ import annotations
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -39,35 +40,137 @@ def credentials_path() -> Path | None:
     return path if path.exists() else None
 
 
+def credentials_dict() -> dict | None:
+    """The service-account key, from a file OR straight out of the environment.
+
+    A file path is right on a laptop and on Render (a Secret File at
+    /etc/secrets/…), but plenty of hosts only offer environment variables, and
+    "put this JSON somewhere on disk first" is where a working key quietly turns
+    into an unconfigured integration. So the same variable accepts the JSON
+    inline, and GOOGLE_SERVICE_ACCOUNT_JSON_B64 accepts it base64-encoded for UIs
+    that mangle multi-line values."""
+    path = credentials_path()
+    if path:
+        try:
+            return json.loads(path.read_text())
+        except (OSError, json.JSONDecodeError):
+            return None
+    raw = env("GOOGLE_SERVICE_ACCOUNT_JSON")
+    if raw and raw.strip().startswith("{"):
+        try:
+            return json.loads(raw)
+        except json.JSONDecodeError:
+            return None
+    b64 = env("GOOGLE_SERVICE_ACCOUNT_JSON_B64")
+    if b64:
+        import base64
+        try:
+            return json.loads(base64.b64decode(b64))
+        except Exception:  # noqa: BLE001
+            return None
+    return None
+
+
 def configured() -> bool:
-    return credentials_path() is not None
+    return credentials_dict() is not None
+
+
+def service_account_email() -> str | None:
+    """Who to share the sheet with. This is the single most common reason a
+    correctly-configured integration returns 403: the sheet was never shared with
+    the robot, and nothing in the Google UI volunteers its address."""
+    return (credentials_dict() or {}).get("client_email")
+
+
+def _project_id() -> str | None:
+    return (credentials_dict() or {}).get("project_id")
+
+
+# Google's failures are precise and its error strings are long; the useful part is
+# usually one clause. Each entry turns that clause into the action that fixes it.
+def diagnose(detail: str | None) -> dict | None:
+    """Turn a Google API error into something a person can act on."""
+    if not detail:
+        return None
+    d = detail.lower()
+    # Google names the project in the error text; prefer that over the key file,
+    # because the number in the message is the one the console link needs.
+    m = re.search(r"project (\d{6,})", detail)
+    proj = m.group(1) if m else (_project_id() or "")
+    sa = service_account_email() or "the service-account address"
+    if "has not been used in project" in d or "is disabled" in d:
+        api = ("Google Drive API" if "drive.googleapis.com" in d or "drive api" in d
+               else "Google Sheets API" if "sheets" in d else "the required Google API")
+        host = "drive.googleapis.com" if "Drive" in api else "sheets.googleapis.com"
+        return {"cause": f"{api} is switched off in Google Cloud project"
+                         + (f" {proj}" if proj else ""),
+                "fix": "Enable BOTH the Google Sheets API and the Google Drive API for that "
+                       "project, wait about a minute, then press Test Google Sheet again. "
+                       "(Setting GSHEET_ID to an existing sheet avoids needing Drive at all.)",
+                "url": f"https://console.developers.google.com/apis/api/{host}/overview"
+                       + (f"?project={proj}" if proj else "")}
+    if "storagequotaexceeded" in d or "quota" in d and "storage" in d:
+        return {"cause": "a service account has no Drive storage of its own, so it "
+                         "cannot create a spreadsheet",
+                "fix": f"Create the sheet yourself in your own Drive, share it with {sa} "
+                       "as an Editor, and set GSHEET_ID to the id in its URL.",
+                "url": "https://sheets.new"}
+    if "permissiondenied" in d or "does not have permission" in d or "[403]" in d:
+        return {"cause": "the service account cannot open that spreadsheet",
+                "fix": f"Open the sheet, press Share, and give {sa} Editor access.",
+                "url": None}
+    if "[404]" in d or "requested entity was not found" in d:
+        return {"cause": "GSHEET_ID does not point at a spreadsheet the service account "
+                         "can see",
+                "fix": "Copy the id out of the sheet URL between /d/ and /edit, and make "
+                       f"sure the sheet is shared with {sa}.",
+                "url": None}
+    return None
 
 
 def status() -> dict:
+    """Configured is not the same as working. Reporting only the first would have
+    shown this integration as connected while every sync had been failing for a
+    day — the credentials were found, and Google was refusing them."""
     last = db.q1("SELECT * FROM sheet_sync ORDER BY synced_at DESC LIMIT 1")
+    last_d = dict(last) if last else None
+    detail = (last_d or {}).get("detail") if (last_d or {}).get("status") == "error" else None
     return {"configured": configured(),
-            "credentials": str(credentials_path()) if configured() else None,
+            "credentials": str(credentials_path()) if credentials_path()
+                           else ("inline env JSON" if configured() else None),
+            "service_account_email": service_account_email(),
+            "sheet_id_set": bool(env("GSHEET_ID")),
+            "ok": bool(last_d and last_d.get("status") == "ok"),
+            "url": (last_d or {}).get("spreadsheet_url"),
             "reason": None if configured() else
-                      "GOOGLE_SERVICE_ACCOUNT_JSON not set or file missing",
-            "last_sync": dict(last) if last else None}
+                      "GOOGLE_SERVICE_ACCOUNT_JSON not set (path or inline JSON)",
+            "last_error": detail,
+            "diagnosis": diagnose(detail),
+            "last_sync": last_d}
 
 
 def _client():
     import gspread
     from google.oauth2.service_account import Credentials
-    creds = Credentials.from_service_account_file(str(credentials_path()), scopes=SCOPES)
+    creds = Credentials.from_service_account_info(credentials_dict(), scopes=SCOPES)
     return gspread.authorize(creds), creds
 
 
 def _open_sheet(gc, creds):
+    """Open by id when we have one — that path uses ONLY the Sheets API.
+
+    Opening or creating by title goes through Drive, which is a second API to
+    enable and, for `create`, a storage quota a service account does not have.
+    Both failures look identical from the outside (a 403 on sync), so the id path
+    is preferred and the fallback says out loud what it is about to depend on."""
     sheet_id = env("GSHEET_ID")
     if sheet_id:
-        return gc.open_by_key(sheet_id)
+        return gc.open_by_key(sheet_id.strip())
     title = env("GSHEET_TITLE", "Thirdbase Deal Pipeline")
     try:
-        return gc.open(title)
+        return gc.open(title)          # Drive API: search by name
     except Exception:  # noqa: BLE001 — not found, create it
-        sh = gc.create(title)
+        sh = gc.create(title)          # Drive API + service-account storage
         share_to = env("GSHEET_SHARE_WITH")
         if share_to:
             for addr in share_to.split(","):
@@ -154,10 +257,16 @@ def sync(xlsx_path: Path | None = None, verbose: bool = True) -> dict:
             print(f"  google sheets: skipped — {rec['detail']}")
         return rec
     if not xlsx_path.exists():
-        rec = {"status": "error", "detail": f"{xlsx_path} not generated yet",
-               "tabs_written": 0, "edits_pulled": 0, "synced_at": db.now_iso()}
-        db.insert("sheet_sync", rec)
-        return rec
+        # Same ephemeral-disk trap as the download button: the rows are in the
+        # database, only the artefact is missing. Build it rather than refuse.
+        try:
+            from outputs.excel import ensure_workbook
+            xlsx_path = ensure_workbook()
+        except Exception as e:  # noqa: BLE001
+            rec = {"status": "error", "detail": f"workbook could not be built: {e}"[:400],
+                   "tabs_written": 0, "edits_pulled": 0, "synced_at": db.now_iso()}
+            db.insert("sheet_sync", rec)
+            return rec
 
     try:
         gc, creds = _client()
@@ -196,6 +305,14 @@ def sync(xlsx_path: Path | None = None, verbose: bool = True) -> dict:
         db.insert("sheet_sync", rec)
         if verbose:
             print(f"  ! google sheets sync failed — {rec['detail']}")
+            # The raw Google error names a symptom; this names the action. Without
+            # it the operator reads "[403] APIError" and has nowhere to go.
+            d = diagnose(rec["detail"])
+            if d:
+                print(f"    cause: {d['cause']}")
+                print(f"    fix:   {d['fix']}")
+                if d.get("url"):
+                    print(f"    open:  {d['url']}")
         return rec
 
 

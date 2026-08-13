@@ -319,3 +319,28 @@ CREATE TABLE IF NOT EXISTS sheet_sync (
   detail TEXT,
   synced_at TEXT NOT NULL
 );
+
+-- Small key/value store for settings a partner can change from the dashboard
+-- (e.g. the digest recipient). Deliberately separate from config/*.yaml: YAML is
+-- the fund's stated intent and belongs in git; this is runtime state and belongs
+-- in the database, so it survives a restart and follows the Supabase backup.
+CREATE TABLE IF NOT EXISTS app_settings (
+  key TEXT PRIMARY KEY,
+  value TEXT,
+  updated_at TEXT NOT NULL
+);
+
+-- Gatekeeper audit trail. Every sentence a model wrote that the engine could not
+-- trace to a stored row is kept here with the reason it was stopped. Two uses:
+-- a partner can ask "what did it try to say", and the fund can see whether the
+-- model is inventing or the coverage is thin — the fixes are different.
+CREATE TABLE IF NOT EXISTS gatekeeper_events (
+  id INTEGER PRIMARY KEY,
+  company_id INTEGER REFERENCES companies(id),
+  surface TEXT NOT NULL,
+  ref TEXT,
+  removed_count INTEGER NOT NULL DEFAULT 0,
+  detail_json TEXT,
+  created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_gatekeeper_company ON gatekeeper_events(company_id);

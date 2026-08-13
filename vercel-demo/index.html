@@ -7,7 +7,7 @@
 <script>
 /* ---- STATIC DEMO SHIM (only present in the exported snapshot) ---------- */
 window.STATIC_DEMO = true;
-window.STATIC_CAPTURED = "2026-08-05 20:32 UTC";
+window.STATIC_CAPTURED = "2026-08-13 05:33 UTC";
 (() => {
   const real = window.fetch.bind(window);
   const J = (obj, status = 200) => Promise.resolve(new Response(
@@ -297,6 +297,18 @@ details.explain p { color:var(--ink-2); font-size:12.5px; margin:6px 0 0; }
       <a id="dlWorkbook" href="api/workbook.xlsx" download><button>⬇ Download Excel</button></a>
     </div>
   </div>
+  <!-- who the summary email goes to — editable without a redeploy -->
+  <div id="mailRow" style="border-top:1px solid var(--border); margin-top:12px;
+       padding-top:10px; display:flex; gap:8px; align-items:center; flex-wrap:wrap">
+    <label for="mailTo" style="font-size:13px"><b>Email the summary to</b></label>
+    <input id="mailTo" type="text" placeholder="name@fund.com, second@fund.com"
+           style="flex:1; min-width:240px; padding:5px 8px; font-size:13px;
+                  border:1px solid var(--border); border-radius:6px;
+                  background:var(--bg); color:var(--ink)">
+    <button id="btnMailSave" style="font-size:12px; padding:4px 10px">Save</button>
+    <span id="mailNote" class="ssub" style="color:var(--ink-2); font-size:12px"></span>
+  </div>
+
   <!-- live step-by-step progress, visible only while a search runs -->
   <div id="stepPanel" hidden style="border-top:1px solid var(--border); margin-top:12px;
        padding-top:10px">
@@ -979,7 +991,7 @@ function drawSources(sources) {
     [{ label: "Source" }, { label: "Status" }, { label: "Items", num: true },
      { label: "Last check" }, { label: "Access" }, { label: "What it would add" }],
     sources.map(s => [s.name.replaceAll("_", " "), { node: statusChip(s) }, s.signals,
-      (s.last_ok_at || "").slice(0, 16).replace("T", " ") || "—",
+      fmtTime(s.last_ok_at),
       s.requires_license
         ? `paid — ${s.license_vendor}${s.env_key ? " · set " + s.env_key : ""}`
         : "free — already on",
@@ -1004,7 +1016,7 @@ async function openBrief(r) {
   if (!res.ok) { openDrawer(r.name, el("div", { cls: "empty", text: "No brief yet." })); return; }
   const d = await res.json();
   openDrawer(`${r.name} — one-page brief`, el("div", {}, [
-    el("div", { cls: "csub", text: `written ${(d.generated_at || "").slice(0, 16).replace("T", " ")}`
+    el("div", { cls: "csub", text: `written ${fmtTime(d.generated_at)}`
       + ` · every number in it links back to a stored source` }),
     el("pre", { text: d.content_md })]));
 }
@@ -1245,6 +1257,61 @@ function renderSteps(run) {
     : "Finishing up…";
 }
 
+
+/* ---- local time -------------------------------------------------------- */
+/* Everything is stored in UTC; only the display is localised. The offset and
+   label come from the API so one config change moves every timestamp. */
+let TZ = { label: "IST", offset_minutes: 330 };
+function fmtTime(iso, dateOnly) {
+  if (!iso) return "—";
+  const d = new Date(String(iso).endsWith("Z") ? iso : iso + "Z");
+  if (isNaN(d)) return String(iso);
+  const l = new Date(d.getTime() + TZ.offset_minutes * 60000);
+  const s = l.toISOString();
+  return dateOnly ? s.slice(0, 10)
+                  : s.slice(0, 16).replace("T", " ") + " " + TZ.label;
+}
+
+
+/* ---- digest recipient ---------------------------------------------------- */
+function renderMailRow(email) {
+  const inp = $("#mailTo"), note = $("#mailNote");
+  if (!inp) return;
+  if (document.activeElement !== inp) inp.value = (email.to || []).join(", ");
+  // Show the saved recipient even when sending is switched off — otherwise a
+  // partner cannot tell whether their address was stored, only that mail is off.
+  const who = (email.to || []).length
+    ? ((email.to_source === "dashboard" ? "Saved here" : "From server settings")
+       + ": " + email.to.join(", "))
+    : "No recipient set yet";
+  const off = email.configured ? "" :
+    " · sending is switched off (no email key), so summaries are saved as files";
+  note.textContent = who + off;
+}
+$("#btnMailSave").onclick = async () => {
+  const b = $("#btnMailSave"), inp = $("#mailTo"), note = $("#mailNote");
+  b.disabled = true; b.textContent = "Saving…";
+  let d = {};
+  try {
+    d = await (await fetch("/api/settings/digest-recipients?to=" +
+        encodeURIComponent(inp.value), { method: "POST" })).json();
+  } catch (e) { d = { ok: false, reason: "the engine did not respond" }; }
+  if (d.ok) {
+    note.textContent = (d.to || []).length
+      ? "Saved — the next summary goes to " + d.to.join(", ")
+      : "Cleared — using the server's own setting again.";
+    toast((d.to || []).length
+      ? "Summary emails will now go to " + d.to.join(", ") +
+        ". Note: on Resend's free tier only the address that owns the Resend account " +
+        "actually receives mail until you verify a domain."
+      : "Recipient cleared — falling back to the server setting.");
+  } else {
+    note.textContent = "Not saved: " + (d.reason || "unknown error");
+  }
+  b.disabled = false; b.textContent = "Save";
+  setTimeout(loadAll, 800);
+};
+
 let _planCache = null;
 async function loadPlan() {
   try { _planCache = _planCache || await (await fetch("/api/run/plan")).json(); }
@@ -1311,7 +1378,7 @@ function renderStatus(s) {
     title.textContent = last ? "✓ Search complete — everything below is up to date"
                              : "Ready when you are";
     sub.textContent = (last && last.finished
-        ? `Last search: ${last.finished.replace("T", " ").replace("Z", " UTC")}` +
+        ? `Last search: ${fmtTime(last.finished)}` +
           (last.seconds ? ` (took ${Math.round(last.seconds)}s)` : "") + ". "
         : "No search has run yet. ") +
       `${picks} top pick${picks === 1 ? "" : "s"} right now. ` +
@@ -1335,7 +1402,7 @@ function drawRuns(runs) {
      { label: "Companies", num: true }, { label: "Top picks", num: true },
      { label: "New finds", num: true }, { label: "Result" }, { label: "" }],
     runs.map(r => [
-      (r.started_at || "").replace("T", " ").replace("Z", " UTC"),
+      fmtTime(r.started_at),
       r.trigger_by === "manual" ? "you (button)" : r.trigger_by,
       r.seconds ? Math.round(r.seconds) + "s" : "—",
       r.stats ? r.stats.companies : "—",
@@ -1353,7 +1420,7 @@ async function openRun(runId) {
   const d = await (await fetch(`/api/runs/${runId}`)).json();
   const body = el("div");
   body.appendChild(el("div", { cls: "csub",
-    text: `Ran ${(d.started_at || "").replace("T", " ").replace("Z", " UTC")} · took `
+    text: `Ran ${fmtTime(d.started_at)} · took `
         + `${Math.round(d.seconds || 0)}s · started by ${d.trigger_by}. This is exactly `
         + `what that search showed — it never changes, even as new searches re-rank.` }));
   const diff = d.diff_vs_previous;
@@ -1399,6 +1466,8 @@ async function loadAll() {
     return;
   }
   $("#hdrSub") && ($("#hdrSub").textContent = "");
+  if (s.display_tz) TZ = s.display_tz;   // one config change moves every timestamp
+  renderMailRow(s.email || {});
   renderStatus(s);
   loadPlan();
 

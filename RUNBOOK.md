@@ -66,6 +66,7 @@ Open the workbook: `open output/deal_pipeline.xlsx` (macOS).
 
 ```bash
 python tests/acceptance.py
+python tests/gatekeeper_test.py
 ```
 
 19 checks mapping 1:1 onto the assignment's acceptance criteria, including the accuracy gate

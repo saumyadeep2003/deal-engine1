@@ -18,7 +18,7 @@ import os
 import re
 import sqlite3
 import threading
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from .config import DB_PATH, ROOT
@@ -58,6 +58,35 @@ def _diagnose_url(url: str) -> str:
 
 def now_iso() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+# ---- display timezone ------------------------------------------------------
+# Everything is STORED in UTC — that is not negotiable, because a database that
+# mixes local times cannot be compared, sorted or migrated safely. Only the
+# rendering is localised. A fixed offset (not zoneinfo) keeps this correct on
+# slim containers with no tzdata, and India has no daylight saving to track.
+DISPLAY_TZ_LABEL = os.environ.get("DISPLAY_TZ_LABEL", "IST")
+DISPLAY_TZ_OFFSET_MIN = int(os.environ.get("DISPLAY_TZ_OFFSET_MIN", "330"))   # UTC+5:30
+
+
+def display_tz() -> dict:
+    return {"label": DISPLAY_TZ_LABEL, "offset_minutes": DISPLAY_TZ_OFFSET_MIN}
+
+
+def to_display(iso: str | None, fmt: str = "%Y-%m-%d %H:%M", with_label: bool = True) -> str:
+    """UTC ISO string -> local display string. Returns '—' for missing input and
+    the original string if it cannot be parsed, so a rendering helper can never
+    be the thing that breaks a page."""
+    if not iso:
+        return "—"
+    try:
+        dt = datetime.fromisoformat(str(iso).replace("Z", "+00:00"))
+    except ValueError:
+        return str(iso)
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    local = dt.astimezone(timezone(timedelta(minutes=DISPLAY_TZ_OFFSET_MIN)))
+    return local.strftime(fmt) + (f" {DISPLAY_TZ_LABEL}" if with_label else "")
 
 
 # ---------------------------------------------------------------- schema ----

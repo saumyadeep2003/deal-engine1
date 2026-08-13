@@ -223,9 +223,22 @@ details.explain p { color:var(--ink-2); font-size:12.5px; margin:6px 0 0; }
       <button id="btnRefresh" class="primary">🔍 Search for new deals</button>
       <button id="btnDigest">✉️ Email me the summary</button>
       <button id="btnLlmTest">🤖 Test AI connection</button>
+      <button id="btnSheetTest">📗 Test Google Sheet</button>
       <a id="dlWorkbook" href="/api/workbook" download><button>⬇ Download Excel</button></a>
     </div>
   </div>
+  <!-- who the summary email goes to — editable without a redeploy -->
+  <div id="mailRow" style="border-top:1px solid var(--border); margin-top:12px;
+       padding-top:10px; display:flex; gap:8px; align-items:center; flex-wrap:wrap">
+    <label for="mailTo" style="font-size:13px"><b>Email the summary to</b></label>
+    <input id="mailTo" type="text" placeholder="name@fund.com, second@fund.com"
+           style="flex:1; min-width:240px; padding:5px 8px; font-size:13px;
+                  border:1px solid var(--border); border-radius:6px;
+                  background:var(--bg); color:var(--ink)">
+    <button id="btnMailSave" style="font-size:12px; padding:4px 10px">Save</button>
+    <span id="mailNote" class="ssub" style="color:var(--ink-2); font-size:12px"></span>
+  </div>
+
   <!-- live step-by-step progress, visible only while a search runs -->
   <div id="stepPanel" hidden style="border-top:1px solid var(--border); margin-top:12px;
        padding-top:10px">
@@ -438,6 +451,24 @@ details.explain p { color:var(--ink-2); font-size:12.5px; margin:6px 0 0; }
     <div class="scroll" style="max-height:300px"><table id="srcTable"></table></div>
   </div>
 </div>
+
+<!-- Connections: passive health says "it worked at some point". This says
+     "it works now, because you just pressed a button and watched it answer." -->
+<div class="card" id="connCard">
+  <div class="chead">
+    <div>
+      <h2>🔌 Connections — test anything, right now</h2>
+      <div class="csub">Every model, key and data source this engine depends on. Each Test
+        makes one real request and reports what actually came back. Nothing here is inferred
+        from the last search.</div>
+    </div>
+    <span class="spacer" style="flex:1"></span>
+    <button id="btnTestAll">▶ Test everything</button>
+  </div>
+  <div id="connResult" class="csub"></div>
+  <div id="connGroups"></div>
+</div>
+
 
 </div><!-- /wrap -->
 
@@ -908,13 +939,101 @@ function drawSources(sources) {
     [{ label: "Source" }, { label: "Status" }, { label: "Items", num: true },
      { label: "Last check" }, { label: "Access" }, { label: "What it would add" }],
     sources.map(s => [s.name.replaceAll("_", " "), { node: statusChip(s) }, s.signals,
-      (s.last_ok_at || "").slice(0, 16).replace("T", " ") || "—",
+      fmtTime(s.last_ok_at),
       s.requires_license
         ? `paid — ${s.license_vendor}${s.env_key ? " · set " + s.env_key : ""}`
         : "free — already on",
       s.unlocks || (s.requires_license ? "—" : "in use now")])),
     "No sources registered.");
 }
+
+
+/* ---------------------------------------------------------- connections panel
+   Passive health answers "did this work at some point". These buttons answer
+   "does it work now" — which is the only version of the question that helps
+   when something is broken, and the only one an interviewer will believe. */
+let _conn = null;
+
+const CONN_GROUPS = [
+  ["models", "AI models", "Each is probed with a full judging-sized prompt, not a "
+    + "one-word ping — a model that replies 'OK' instantly and then times out on real "
+    + "work has happened here before."],
+  ["integrations", "Keys & services", "The accounts and credentials the engine spends "
+    + "money through or delivers to."],
+  ["sources", "Data sources", "Free sources make one real request. Paid ones report "
+    + "'needs a subscription' — that's a correct answer, not a failure."],
+];
+
+function connRow(t, res) {
+  const btn = el("button", { cls: "ghost", text: "Test" });
+  btn.style.padding = "3px 10px";
+  const out = el("span", { cls: "csub", text: res ? "" : "not tested yet" });
+  btn.onclick = async () => {
+    btn.disabled = true; const was = btn.textContent; btn.textContent = "…";
+    out.textContent = "testing…"; out.style.color = "";
+    let d = {};
+    try {
+      d = await (await fetch("/api/connections/test?target=" + encodeURIComponent(t.id),
+                             { method: "POST" })).json();
+    } catch (e) { d = { ok: false, detail: "the engine did not respond" }; }
+    renderVerdict(out, d);
+    btn.disabled = false; btn.textContent = was;
+  };
+  if (res) renderVerdict(out, res);
+  return [t.label.replaceAll("_", " "), t.detail || "", { node: out }, { node: btn }];
+}
+
+function renderVerdict(node, d) {
+  node.textContent = "";
+  const ok = d.ok, skipped = d.skipped;
+  const dot = el("span", { cls: "ic", text: skipped ? "🔒" : ok ? "✔" : "✖" });
+  dot.style.color = css(skipped ? "--muted" : ok ? "--good" : "--critical");
+  const bits = [dot, document.createTextNode(" " + (d.detail || (ok ? "working" : "failed")))];
+  if (d.seconds) bits.push(document.createTextNode(` · ${d.seconds}s`));
+  if (d.fetch_mode === "cached_snapshot")
+    bits.push(document.createTextNode(" · answered from the offline cache, not live"));
+  node.append(...bits);
+  if (d.hint) node.append(el("div", { cls: "csub", text: "→ " + d.hint }));
+  if (d.provider_message)
+    node.append(el("div", { cls: "csub", text: "provider said: "
+      + String(d.provider_message).slice(0, 180) }));
+  if (d.extra && d.extra.service_account_email)
+    node.append(el("div", { cls: "csub", text: "robot account: " + d.extra.service_account_email }));
+}
+
+async function drawConnections(results) {
+  if (!_conn) {
+    try { _conn = await (await fetch("/api/connections")).json(); }
+    catch (e) { return; }
+  }
+  const byTarget = {};
+  (results || []).forEach(r => { byTarget[r.target] = r; });
+  const host = $("#connGroups"); host.textContent = "";
+  for (const [key, title, blurb] of CONN_GROUPS) {
+    const rows = (_conn[key] || []).map(t => connRow(t, byTarget[t.id]));
+    host.append(el("h3", { text: title }),
+                el("div", { cls: "csub", text: blurb }));
+    const wrap = el("div", { cls: "scroll" });
+    wrap.style.maxHeight = "340px";
+    wrap.appendChild(rows.length
+      ? tableFrom([{ label: "What" }, { label: "Why it matters" },
+                   { label: "Result" }, { label: "" }], rows)
+      : el("div", { cls: "empty", text: "Nothing registered." }));
+    host.appendChild(wrap);
+  }
+}
+
+$("#btnTestAll").onclick = async () => {
+  const b = $("#btnTestAll"); b.disabled = true; b.textContent = "Testing everything…";
+  $("#connResult").textContent = "Running one real request per connection, one at a time — "
+    + "firing them all at once would get us rate-limited by the very sources we depend on.";
+  let d = {};
+  try { d = await (await fetch("/api/connections/test-all", { method: "POST" })).json(); }
+  catch (e) { d = { results: [], passed: 0, total: 0 }; }
+  await drawConnections(d.results);
+  $("#connResult").textContent = `${d.passed} of ${d.total} connections answered.`;
+  b.disabled = false; b.textContent = "▶ Test everything";
+};
 
 /* ------------------------------------------------------------------- drawers */
 const drawer = $("#drawer");
@@ -933,7 +1052,7 @@ async function openBrief(r) {
   if (!res.ok) { openDrawer(r.name, el("div", { cls: "empty", text: "No brief yet." })); return; }
   const d = await res.json();
   openDrawer(`${r.name} — one-page brief`, el("div", {}, [
-    el("div", { cls: "csub", text: `written ${(d.generated_at || "").slice(0, 16).replace("T", " ")}`
+    el("div", { cls: "csub", text: `written ${fmtTime(d.generated_at)}`
       + ` · every number in it links back to a stored source` }),
     el("pre", { text: d.content_md })]));
 }
@@ -1086,6 +1205,29 @@ $("#btnLlmTest").onclick = async () => {
     loadAll(); }, 9000);
 };
 
+// A Sheets integration fails in three ways that all look like "403" from outside:
+// an API switched off in the Cloud project, a sheet never shared with the robot
+// account, or a service account with no Drive storage. The button runs a real
+// sync and reports which one, with the address to share the sheet with.
+$("#btnSheetTest").onclick = async () => {
+  const b = $("#btnSheetTest"); b.disabled = true; b.textContent = "Testing…";
+  let d = {};
+  try { d = await (await fetch("/api/sheets/test", { method: "POST" })).json(); }
+  catch (e) { d = { ok: false, detail: "the engine did not respond" }; }
+  if (d.ok) {
+    b.textContent = "Sheet synced ✔";
+    toast("Google Sheet updated — " + d.tabs_written + " tabs written. " + (d.url || ""));
+  } else {
+    b.textContent = "Sheet not working ✕";
+    const g = d.diagnosis;
+    toast("Google Sheet isn't syncing: " + (g ? g.cause + ". " + g.fix
+          : (d.hint || String(d.detail || "unknown").slice(0, 220)))
+      + (d.service_account_email ? " Robot account: " + d.service_account_email : ""));
+  }
+  setTimeout(() => { b.disabled = false; b.textContent = "📗 Test Google Sheet";
+    loadAll(); }, 12000);
+};
+
 $("#btnStop").onclick = async () => {
   const b = $("#btnStop"); b.disabled = true; b.textContent = "Stopping…";
   const r = await fetch("/api/run/cancel", { method: "POST" });
@@ -1174,6 +1316,61 @@ function renderSteps(run) {
     : "Finishing up…";
 }
 
+
+/* ---- local time -------------------------------------------------------- */
+/* Everything is stored in UTC; only the display is localised. The offset and
+   label come from the API so one config change moves every timestamp. */
+let TZ = { label: "IST", offset_minutes: 330 };
+function fmtTime(iso, dateOnly) {
+  if (!iso) return "—";
+  const d = new Date(String(iso).endsWith("Z") ? iso : iso + "Z");
+  if (isNaN(d)) return String(iso);
+  const l = new Date(d.getTime() + TZ.offset_minutes * 60000);
+  const s = l.toISOString();
+  return dateOnly ? s.slice(0, 10)
+                  : s.slice(0, 16).replace("T", " ") + " " + TZ.label;
+}
+
+
+/* ---- digest recipient ---------------------------------------------------- */
+function renderMailRow(email) {
+  const inp = $("#mailTo"), note = $("#mailNote");
+  if (!inp) return;
+  if (document.activeElement !== inp) inp.value = (email.to || []).join(", ");
+  // Show the saved recipient even when sending is switched off — otherwise a
+  // partner cannot tell whether their address was stored, only that mail is off.
+  const who = (email.to || []).length
+    ? ((email.to_source === "dashboard" ? "Saved here" : "From server settings")
+       + ": " + email.to.join(", "))
+    : "No recipient set yet";
+  const off = email.configured ? "" :
+    " · sending is switched off (no email key), so summaries are saved as files";
+  note.textContent = who + off;
+}
+$("#btnMailSave").onclick = async () => {
+  const b = $("#btnMailSave"), inp = $("#mailTo"), note = $("#mailNote");
+  b.disabled = true; b.textContent = "Saving…";
+  let d = {};
+  try {
+    d = await (await fetch("/api/settings/digest-recipients?to=" +
+        encodeURIComponent(inp.value), { method: "POST" })).json();
+  } catch (e) { d = { ok: false, reason: "the engine did not respond" }; }
+  if (d.ok) {
+    note.textContent = (d.to || []).length
+      ? "Saved — the next summary goes to " + d.to.join(", ")
+      : "Cleared — using the server's own setting again.";
+    toast((d.to || []).length
+      ? "Summary emails will now go to " + d.to.join(", ") +
+        ". Note: on Resend's free tier only the address that owns the Resend account " +
+        "actually receives mail until you verify a domain."
+      : "Recipient cleared — falling back to the server setting.");
+  } else {
+    note.textContent = "Not saved: " + (d.reason || "unknown error");
+  }
+  b.disabled = false; b.textContent = "Save";
+  setTimeout(loadAll, 800);
+};
+
 let _planCache = null;
 async function loadPlan() {
   try { _planCache = _planCache || await (await fetch("/api/run/plan")).json(); }
@@ -1240,7 +1437,7 @@ function renderStatus(s) {
     title.textContent = last ? "✓ Search complete — everything below is up to date"
                              : "Ready when you are";
     sub.textContent = (last && last.finished
-        ? `Last search: ${last.finished.replace("T", " ").replace("Z", " UTC")}` +
+        ? `Last search: ${fmtTime(last.finished)}` +
           (last.seconds ? ` (took ${Math.round(last.seconds)}s)` : "") + ". "
         : "No search has run yet. ") +
       `${picks} top pick${picks === 1 ? "" : "s"} right now. ` +
@@ -1264,7 +1461,7 @@ function drawRuns(runs) {
      { label: "Companies", num: true }, { label: "Top picks", num: true },
      { label: "New finds", num: true }, { label: "Result" }, { label: "" }],
     runs.map(r => [
-      (r.started_at || "").replace("T", " ").replace("Z", " UTC"),
+      fmtTime(r.started_at),
       r.trigger_by === "manual" ? "you (button)" : r.trigger_by,
       r.seconds ? Math.round(r.seconds) + "s" : "—",
       r.stats ? r.stats.companies : "—",
@@ -1282,7 +1479,7 @@ async function openRun(runId) {
   const d = await (await fetch(`/api/runs/${runId}`)).json();
   const body = el("div");
   body.appendChild(el("div", { cls: "csub",
-    text: `Ran ${(d.started_at || "").replace("T", " ").replace("Z", " UTC")} · took `
+    text: `Ran ${fmtTime(d.started_at)} · took `
         + `${Math.round(d.seconds || 0)}s · started by ${d.trigger_by}. This is exactly `
         + `what that search showed — it never changes, even as new searches re-rank.` }));
   const diff = d.diff_vs_previous;
@@ -1328,6 +1525,8 @@ async function loadAll() {
     return;
   }
   $("#hdrSub") && ($("#hdrSub").textContent = "");
+  if (s.display_tz) TZ = s.display_tz;   // one config change moves every timestamp
+  renderMailRow(s.email || {});
   renderStatus(s);
   loadPlan();
 
@@ -1345,14 +1544,39 @@ async function loadAll() {
   if (!s.email.configured || !(s.email.to || []).length)
     notes.push("Email summaries aren't being delivered yet (" + (s.email.reason ||
       "no recipient set") + ") — they're saved as files instead.");
+  // "Configured" was reported as success for a day while every sync 403'd. Credentials
+  // being found and Google accepting them are different facts, and the second one is
+  // the one a partner waiting on a shared sheet actually cares about.
   if (!s.sheets.configured) notes.push("The shared Google Sheet isn't connected — the "
     + "Excel download above is the master copy.");
+  else if (s.sheets.last_error) {
+    const d = s.sheets.diagnosis;
+    notes.push("The Google Sheet is set up but the last sync was rejected by Google"
+      + (d ? " — " + d.cause + ". Fix: " + d.fix : ": " + String(s.sheets.last_error).slice(0, 200))
+      + (d && d.url ? " (" + d.url + ")" : "")
+      + (s.sheets.service_account_email
+         ? " The robot account to share the sheet with is " + s.sheets.service_account_email + "."
+         : "")
+      + " Until it succeeds, the Excel download above is the master copy.");
+  }
   if (s.storage && s.storage.error) notes.push("The permanent database could not be "
     + "reached, so results are being kept in a temporary file that resets when the "
     + "service restarts. Reason: " + s.storage.error + " (see SUPABASE.md to fix it).");
   else if (s.storage && !s.storage.durable) notes.push("Results are stored in a local file. "
     + "On free hosting that file resets on restarts — connect the Supabase database "
     + "(see SUPABASE.md in the repo) to keep every search's history permanently.");
+  // The loudest possible warning for the failure that is hardest to see: the
+  // service running code older than the repository. Everything else on this
+  // page is a lie if this one is true.
+  if (s.build && s.build.complete === false)
+    notes.push("⚠ THIS DEPLOY IS RUNNING OLDER CODE than the repository. Missing from the "
+      + "running build: " + (s.build.missing || []).join(", ") + ". Features listed as "
+      + "missing are not broken — they are not there. Redeploy from the latest commit "
+      + "(build " + (s.build.commit || "unknown") + ").");
+  if (s.gatekeeper && s.gatekeeper.total_removed)
+    notes.push("The fact-checker removed " + s.gatekeeper.total_removed + " AI-written "
+      + "sentence(s) that didn't match anything the engine had stored, and marked each "
+      + "gap in place. The exact wording and the reason for each is at /api/gatekeeper.");
   if (notes.length) {
     const box = el("div", { cls: "warnbox" });
     notes.forEach(n => box.appendChild(el("div", { text: "• " + n })));
@@ -1370,7 +1594,12 @@ async function loadAll() {
     kpi("Noise removed", s.signals_filtered_pct + "%",
         "filtered out before any expensive analysis"),
     kpi("Briefs written", s.briefs, "one-pagers, every number sourced"),
-    kpi("Watching", s.recommendations["Watch"] || 0, "not ready yet, kept an eye on"));
+    kpi("Watching", s.recommendations["Watch"] || 0, "not ready yet, kept an eye on"),
+    // The gatekeeper's whole value is that it is countable. A zero here means the
+    // model stayed inside its evidence; a number means it tried not to and was
+    // stopped — either way the reader learns something a promise cannot tell them.
+    kpi("Made-up claims blocked", (s.gatekeeper && s.gatekeeper.total_removed) || 0,
+        "AI sentences removed because they didn't match a stored source"));
 
   const hc = $("#healthChip"); hc.textContent = "";
   const bad = s.sources.filter(x => !x.requires_license
@@ -1385,6 +1614,7 @@ async function loadAll() {
   drawFunnel(s.funnel);
   drawRecMix(s.recommendations);
   drawSources(s.sources);
+  drawConnections(null);
 
   const sec = await (await fetch("/api/sectors")).json();
   drawSectors(sec.rows);

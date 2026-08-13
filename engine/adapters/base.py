@@ -150,6 +150,45 @@ class BaseAdapter:
     def fetch(self, since: datetime) -> list[Signal]:  # pragma: no cover
         raise NotImplementedError
 
+    # ---- live probe ----------------------------------------------------------
+
+    def probe(self) -> dict:
+        """One real request, right now, so 'is this source live?' can be answered
+        by pressing something rather than by trusting the last scheduled run.
+
+        The default runs a short-window fetch, which is the most honest test
+        available: it exercises the exact code the pipeline uses. Adapters whose
+        fetch is expensive (one that walks every tracked company, say) override
+        this with a single representative call — the point is proof of
+        reachability, not a second ingest.
+
+        `cached_snapshot` is reported rather than hidden. A source answering from
+        the offline cache is *working*, but it is not live, and those are
+        different facts a partner is entitled to tell apart."""
+        t = time.time()
+        signals = self.fetch(self.probe_since())
+        mode = self._last_fetch_mode
+        return {"ok": True, "seconds": round(time.time() - t, 1), "fetch_mode": mode,
+                "detail": f"{len(signals)} item(s) returned"
+                          + (" from the offline snapshot cache, not live"
+                             if mode == "cached_snapshot" else " live")}
+
+    @staticmethod
+    def probe_since() -> datetime:
+        from datetime import timedelta, timezone as _tz
+        return datetime.now(_tz.utc) - timedelta(days=2)
+
+    def probe_url(self, url: str, expect: str = "") -> dict:
+        """Helper for adapters that override probe(): fetch one URL and report."""
+        t = time.time()
+        body, mode = self.http_get(url, retries=0)
+        ok = (expect in body) if expect else bool(body)
+        return {"ok": ok, "seconds": round(time.time() - t, 1), "fetch_mode": mode,
+                "detail": (f"{len(body)} bytes from {url.split('/')[2]}"
+                           + (" (offline snapshot, not live)"
+                              if mode == "cached_snapshot" else " live")
+                           + ("" if ok else f" — expected '{expect}' in the response"))}
+
     def safe_fetch(self, since: datetime) -> list[Signal]:
         """fetch() wrapped with heartbeat + error classification."""
         try:

@@ -12,6 +12,7 @@ pip install -r requirements.txt
 python demo.py                 # narrated end-to-end run, < 3 minutes
 python chat.py                 # partner chat REPL
 python tests/acceptance.py     # 19 acceptance criteria, after demo.py
+python tests/gatekeeper_test.py # 22 anti-hallucination checks (recall + precision)
 
 # Or deploy it as an always-on service with a partner dashboard
 ./deploy/install.sh            # LaunchAgent + venv + dashboard on :8787  (see DEPLOY.md)
@@ -67,6 +68,20 @@ wrong; that discipline is part of what is being demonstrated.
 - **Citations enforced.** A brief containing a numeric claim without a `[S:signal_id]` /
   `[computed]` citation is rejected by validation, regenerated once, then flagged — never
   published.
+- **Gatekeeper: every model sentence is traced before publication** (`engine/gatekeeper.py`).
+  Citation *shape* is not evidence — an invented `[S:99999]` satisfies a regex perfectly,
+  which is how a fabricated claim can look better sourced than a real one. So each sentence
+  a model writes is resolved against the database on three axes: the cited signal must
+  **exist and belong to this company**; every figure must **match a stored value** (1%
+  tolerance, so `$12.5M` still matches a stored `12500000`); every named investor or firm
+  must **appear in this company's evidence** — which is what stops "backed by Sequoia" when
+  no such investment row exists. A sentence that fails is removed and replaced with
+  `[REMOVED: claim could not be traced to a stored source]`; the rest of the brief still
+  publishes, and a rating whose *entire* justification was removed is nulled with it rather
+  than left as a bare score. Every removal is stored in `gatekeeper_events` and readable at
+  `/api/gatekeeper` — the anti-hallucination claim is meant to be falsifiable, not trusted.
+  Applies to briefs, the digest, and chat. Tests: `python tests/gatekeeper_test.py`
+  (recall *and* precision — a filter that eats true sentences gets switched off).
 - **Stub mode fails loudly.** Without the provider API key (`NVIDIA_API_KEY`), judgment fields read
   `[STUB: no API key — judgment unavailable]` — never plausible fake analysis.
 - **Synthetic records** exist only for two mechanism demos (entity-resolution collapse,

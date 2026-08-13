@@ -101,13 +101,34 @@ Five minutes, once:
 4. Open the service account → Keys → Add key → **JSON** → download it.
 5. Move it somewhere private and point `.env` at it:
    `GOOGLE_SERVICE_ACCOUNT_JSON=/Users/you/.config/deal-engine-sa.json`
-6. Either let it create the sheet (`GSHEET_TITLE` + `GSHEET_SHARE_WITH=you@gmail.com`),
-   **or** create a sheet yourself, share it as Editor with the service account's
-   `client_email` (it's in the JSON), and put its id in `GSHEET_ID`.
+6. **Recommended:** create a sheet yourself at <https://sheets.new>, press Share and give
+   the service account's `client_email` (it's in the JSON) **Editor** access, then set
+   `GSHEET_ID` to the id in the sheet's URL — the part between `/d/` and `/edit`.
+   Alternatively let it create the sheet (`GSHEET_TITLE` + `GSHEET_SHARE_WITH=you@gmail.com`).
+
+**On Render** there is no `.env` file: add the key as a **Secret File**
+(Environment → Secret Files → filename `gsa.json`, paste the JSON) and set
+`GOOGLE_SERVICE_ACCOUNT_JSON=/etc/secrets/gsa.json`. If a host offers only environment
+variables, paste the JSON *itself* into `GOOGLE_SERVICE_ACCOUNT_JSON`, or base64 it into
+`GOOGLE_SERVICE_ACCOUNT_JSON_B64` — all three forms are accepted.
 
 ```bash
 ./dealctl sheets              # sync now, prints the sheet URL
 ```
+
+Press **📗 Test Google Sheet** on the dashboard to run one real sync and see what Google
+actually said. Three different problems all present as a bare `[403]` and the button tells
+them apart:
+
+| What you see | What it means | Fix |
+|---|---|---|
+| *"Google Drive API has not been used in project N… or it is disabled"* | The API is off in the Cloud project — step 2 was skipped or done in a different project | Enable **both** Sheets and Drive APIs, wait a minute, test again. Or set `GSHEET_ID`, which never touches Drive. |
+| *"The caller does not have permission"* | The sheet was never shared with the robot account | Share it as **Editor** with the `client_email` the dashboard shows |
+| *"storageQuotaExceeded"* | A service account has no Drive of its own, so it cannot *create* a sheet | Make the sheet yourself and use `GSHEET_ID` |
+
+Because credentials being *found* and Google *accepting* them are different facts, the
+dashboard reports both: a configured-but-failing sheet shows the cause, the fix and the
+robot's address in the posture banner rather than reading as connected.
 
 The sheet is a mirror of the same workbook renderer — one source of truth, two
 destinations. The two-way sync contract is identical: the **Recommendation** column is read
@@ -148,6 +169,7 @@ Tailscale is the better answer.
 
 ```bash
 python tests/acceptance.py     # 19 pipeline criteria (run after a pipeline run)
+python tests/gatekeeper_test.py # 22 anti-hallucination checks (standalone, seeds its own DB)
 python tests/deployment.py     # 13 deployment criteria (run against the live service)
 ```
 

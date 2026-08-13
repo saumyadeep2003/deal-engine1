@@ -69,6 +69,18 @@ class RssNewsAdapter(BaseAdapter):
     name = "rss_news"
     interval_minutes = 60
 
+    def probe(self) -> dict:
+        """One feed, not all of them. Every configured feed is exercised on a real
+        run and reported per-source in health; a button that pulls eight feeds to
+        answer 'is RSS working' is a worse experience than the answer is worth."""
+        feeds = self.cfg.get("feeds", [])
+        if not feeds:
+            return {"ok": False, "detail": "no feeds configured in config/sources.yaml"}
+        res = self.probe_url(feeds[0]["url"])
+        res["detail"] = f"{feeds[0].get('name') or feeds[0]['url']}: " + res["detail"] \
+            + f" ({len(feeds)} feeds configured, all pulled on a real run)"
+        return res
+
     def fetch(self, since: datetime) -> list[Signal]:
         feeds = self.cfg.get("feeds", [])
         signals: list[Signal] = []

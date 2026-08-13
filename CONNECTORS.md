@@ -79,3 +79,68 @@ is wrong or empty — the table prints the exact name the engine looks for.
 The columns that were showing `— (requires Coresignal)` or `— (requires PitchBook)` will
 fill in on the next search. Nothing else changes: the same filter, the same scoring, the
 same provenance rules. More evidence in, better-supported judgments out.
+
+## Apify — scraped coverage without an enterprise contract
+
+`APIFY_TOKEN`. Sign up at <https://apify.com>, then **Settings → Integrations → API token**.
+The free tier's monthly credit runs a small demo; the paid Starter plan (~$39–49/month)
+covers real daily use. Set the token and the source switches itself on — no code change.
+
+What it adds once connected:
+
+- **Funding discovery beyond SEC filings.** A search Actor runs one query per fund theme
+  from `config/thesis.yaml`, and each real result becomes a signal with its URL. Amounts and
+  stages are extracted by the *same deterministic regex* the RSS and Hacker News adapters
+  use — a scraped headline is held to exactly the evidence standard as a Form D filing, and
+  a model is never asked what a number is.
+- **Self-reported team size and pricing pages**, by crawling the company's own website.
+  Stored as `self_reported_headcount` with confidence 0.5 and source `apify:<actor>`, because
+  a company's About page is weaker evidence than Coresignal's measured headcount. When the
+  site says nothing, the field records *why* rather than staying mysteriously blank.
+
+Configure Actors in `config/sources.yaml` under the `apify` entry — Actor ids, queries and
+page limits are data, so trying a different Store Actor never touches Python.
+
+### What is deliberately NOT wired, and why
+
+LinkedIn and X Actors exist on the Apify Store, and they would fill the headcount and
+GP-attention gaps cheaply. They are **intentionally excluded**: both platforms prohibit
+scraping in their terms of service. For a personal project that is your call to make; for a
+tool handed to a fund — an entity with compliance obligations — it is a liability that costs
+more than the subscription it saves. The licensed routes for exactly that data (Coresignal,
+the official X API) are already wired in `licensed.py` and need only their env var.
+
+### Verifying
+
+`POST /api/apify/test` (or the dashboard) makes one cheap call to Apify's `users/me` and
+reports the account and plan, or names the failure — token rejected, or unreachable.
+
+## Free substitutes for the paid vendors (no key, no contract, no terms strained)
+
+Three sources were added specifically to cover what Coresignal and the X API are
+actually bought for. All three are documented, public and key-free — they need no
+setup at all and are live the moment you deploy.
+
+**`ats_boards` — the Coresignal substitute.** Greenhouse, Lever and Ashby publish
+every customer's open roles through public endpoints that exist to be consumed. The
+engine derives open-role counts, function mix (engineering vs sales vs research) and
+locations. Hiring *velocity* comes from the engine's own dated observations — one
+immutable signal per company per day — so a trend is something the system measured,
+not something a vendor asserted. This is not a headcount, and the field names say so.
+
+**`bluesky` — the X substitute.** The AT Protocol's public appview serves posts with
+no key and no terms problem. It polls the investor handles you list under `handles:`
+in config/sources.yaml plus thesis-driven searches. The mechanism is handle-based
+exactly like the X adapter, so the day an X budget appears, nothing is redesigned.
+Honest limitation: Bluesky's investor population is smaller than X's — this is real
+GP-attention signal, not equivalent coverage.
+
+**`wayback_team` — team growth for free.** The Internet Archive holds dated snapshots
+of a company's own /team page. Counting distinct profile links on an old snapshot and
+a recent one gives a growth measurement with two citable URLs. Note precisely what it
+reads: an *archived copy of the company's own page*, never LinkedIn itself. Confidence
+is set to 0.4 and the caveat travels with the number, because a redesign or a
+leadership-only section will skew it.
+
+To use Bluesky's GP watchlist, add handles (without the @) under the `bluesky` entry
+in config/sources.yaml. Everything else works with no configuration.

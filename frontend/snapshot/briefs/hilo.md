@@ -1,32 +1,51 @@
-# Hilo — intelligence brief
+# Hilo
 
-Generated: 2026-08-05T20:30:24Z | trigger: auto_threshold | recommendation: **Deep Dive**
+**Worth a close look now** (Deep Dive)
 
-## Funding history
+*Written 06 Aug 2026, 17:46 IST · trigger: reformat* [computed]
 
-- 2026-07-22: round — $19.0M [S:129] (https://news.ycombinator.com/item?id=49008169)
 
-## Cap table quality
+## At a glance
+
+| | |
+|---|---|
+| Our call | **Deep Dive** — worth a close look now [computed] |
+| Rank against peers | 2nd of 10 in unclassified · stage unknown [computed] ⚠ small cohort, weak evidence |
+| Funding we can see | $19.0M round [S:125] |
+| Tier-1 investors on board | 0 [computed] |
+| Last sign of activity | 22 Jul 2026 |
+| Headcount & growth | — (requires Coresignal) |
+
+## Money raised
+
+- 2026-07-22: round — $19.0M [S:125] (https://news.ycombinator.com/item?id=49008169)
+
+## Who has backed them
 
 - Tier 1: 0, Tier 2: 0, Tier 3: 0 [computed] (observed investments × config tier list; full cap table — requires PitchBook)
 
-## Team & hiring signals
+## The team
 
 - Headcount / 6-month growth: — (requires Coresignal)
 
-## Product traction
+## Signs of traction
 
-- 2026-07-22 funding_event: Hilo Raises $19M for Blood Pressure Wearables [S:129]
+- No product-traction evidence in free sources yet (GitHub activity, customer wins, pricing pages, customer logos).
 
-## Thesis fit (computed)
+## How it ranks against similar companies
 
-- 91th percentile of 11 in cohort unclassified|unknown — LOW CONFIDENCE (cohort < 20) [computed]
+- 90th percentile of 10 in cohort unclassified|unknown (sector not determined from the available text — this is a catch-all bucket) — LOW CONFIDENCE (cohort < 20) [computed]
 - Feature vector stored (scores.features_json, model=computed-v1, prompt=score-p1) [computed]
 
-## Investor & operator commentary
+## What people are saying publicly
 
-- None captured yet in free sources (HN/Reddit); X, Blind, podcasts, Substack threads — (require licenses).
-## Judgment (model-generated — labelled, distinct from observed data)
+- [hackernews] [STUB: no API key — judgment unavailable] — “As an American, no.  Well aside from - yes a significant part thrives on seeing others than them suffer.  Years ago, I spent multiple times ” (https://news.ycombinator.com/item?id=48350571)
+- [hackernews] [STUB: no API key — judgment unavailable] — “For example, Oura’s new nighttime blood pressure feature tells users whether their blood pressure is dipping overnight — when it doesn’t dip” (https://news.ycombinator.com/item?id=48346806)
+- [hackernews] [STUB: no API key — judgment unavailable] — “Of course you were it predates all the way back to OLE in Windows 3.x, but not the extent it is pervasive in modern Windows past Vista. Afte” (https://news.ycombinator.com/item?id=48146419)
+
+## What the AI makes of it
+
+*Model-written judgement — labelled on purpose, and separate from the observed facts above. Numbers here are opinions, not measurements.*
 
 - Founder quality: [STUB: no API key — judgment unavailable]
 - Moat / defensibility: [STUB: no API key — judgment unavailable]
@@ -37,8 +56,22 @@ Generated: 2026-08-05T20:30:24Z | trigger: auto_threshold | recommendation: **De
 ### Thesis narrative
 [STUB: no API key — judgment unavailable]
 
-## Comparable companies
-- No cohort assigned yet.
+## What this brief can't tell you
 
-## Recommendation
-**Deep Dive** [computed] (percentile thresholds in config/thesis.yaml; partner override wins)
+- No founder information found in free sources — team quality is unassessed
+- Headcount, hiring growth and runway — requires Coresignal
+- Full cap table, valuation and complete funding history — requires PitchBook
+- What investors are saying privately (X, Blind, podcasts, Substack) — requires those licences
+
+## Similar companies we're tracking
+- Cohort is the 'unclassified' catch-all (sector not determined from the available text), so these are weak comparables:
+- Moonshot AI (market rank 1 in cohort) [computed]
+- OpenRouter (market rank 1 in cohort) [computed]
+- Travis Kalanick's Atoms (market rank 2 in cohort) [computed]
+- DeepInfra (market rank 2 in cohort) [computed]
+- Tech-Infused Pool Hall Startup (market rank 3 in cohort) [computed]
+
+## The call
+**Deep Dive** [computed] — set by percentile thresholds in config/thesis.yaml. A partner's own call always overrides this and is recorded.
+
+> Caveat: this rank comes from a cohort of only 10 comparable companies in the 'unclassified' catch-all bucket. Treat it as a prompt to look, not as evidence of relative quality — a wider cohort (or licensed data) is what makes the ranking meaningful.

@@ -269,3 +269,233 @@ Chronological log of judgment calls made while building. Part of the deliverable
     dead dashboard. Verified against real Postgres: 12 identical parameterised queries, a
     forced mid-flight connection close, and a full tracked pipeline run (43 companies,
     7 top picks) with zero tracebacks.
+44. **Auditing one brief found four defects, three of them accuracy bugs.** (a) The brief
+    claimed "100th percentile of 5 in cohort unclassified|series-b" and, four lines later,
+    "No cohort assigned yet" — `_comparables()` bailed on a null sector while `score_all()`
+    buckets those companies into an 'unclassified' cohort. Peers now come from the same
+    cohort the percentile was computed in, labelled as the catch-all it is. (b) "Product
+    traction" listed the funding announcement as traction, because the section ended with a
+    dump of all recent signals; funding events are excluded there (they are already under
+    Funding history) and the remainder is labelled "Other recent signals (mentions, not
+    traction)". (c) A rank drawn from a cohort of five was presented as a Deep Dive with no
+    caveat at the recommendation; low-confidence cohorts now carry an explicit "treat as a
+    prompt to look, not evidence of relative quality" note. (d) Regenerating exposed the
+    worst one: Pangram's commentary carried eight Hacker News comments from 2014-2015 about
+    *pangrams the word game*. A company first observed in 2026 cannot have been discussed in
+    2015, so commentary older than (first signal − 540 days) is now rejected at harvest and
+    pruned from storage on every run — 32 false quotes removed from the existing corpus, the
+    two genuine Pangram comments kept. This is the name-collision risk noted in item 12,
+    caught in the act by reading real output.
+45. **The easy test answered the wrong question.** `/api/llm/test` sent "reply OK" and came
+    back in 0.8s, which looked like proof the model worked — while every real judgment was
+    timing out. A trivial prompt on a reasoning model is nothing like a judging prompt. The
+    diagnostic now supports `hard=true` (a judging-sized prompt, the only test that reflects
+    the pipeline) and `model=` (probe any model without editing config and redeploying,
+    turning a 4-minute deploy-and-hope loop into a 3-second question).
+46. **Model routing is now measured, not assumed.** Probed live against the provider with a
+    judging-sized prompt: `llama-3.1-8b-instruct` 3.1s (works), `inkling` 43.2s (works on the
+    probe, but real company contexts are larger and were exceeding 75s), `llama-3.1-70b` and
+    `llama-3.3-70b` both TIMED OUT at 75s — the free tier cannot serve the big models in
+    time. Routing moved to 8b for every stage: real, cited, slightly simpler analysis beats
+    both a [STUB] and a 13-minute search. The measurements are recorded in models.yaml so the
+    next person sees why, and `fallback_model` retries once when the routed model fails for
+    any reason (retired, mistyped, or busy) before stubbing. The one-line upgrade path back
+    to a larger model is a config edit the day a faster endpoint is available.
+47. **A fast model that returns all-nulls is worse than a stub.** With judging routed to 8b,
+    the calls succeeded (10 companies, 60s, zero errors) but returned valid JSON with every
+    field null — which a brief renders as "Founder quality: None/10 — n/a": output that
+    looks like analysis and says nothing, the exact failure the accuracy mandate exists to
+    prevent. Three changes: the JSON instruction now demands filled fields and states that
+    an all-null response is not a valid answer; `_is_empty_judgement()` detects the case
+    (a considered `is_venture_relevant: false` is a real answer, not an empty one); and an
+    empty result escalates ONCE to `strong_model` (inkling — slower, but it fills the
+    fields). If the escalation is also empty the judgement is dropped, so the brief says
+    [STUB] rather than publishing nulls dressed as analysis.
+48. **A score without evidence is worse than a null.** The first genuinely-filled judgement
+    read "Founder quality: 8.0/10 — no prior exits or team information, but robotics
+    experience", and elsewhere treated a CIK number as evidence of being funded. A confident
+    number a partner might act on, resting on nothing, is exactly the failure mode this build
+    exists to avoid. The judging prompt now carries an explicit scoring rule: a score must be
+    earned by cited evidence, absent evidence returns null with a reason, and identifiers
+    (CIK, filing ids) are not evidence of quality.
+49. **Brief cap raised 8 -> 30.** The cap was sized for slow flagship-tier calls; judging now
+    costs ~3s, and a cap of 8 left 22 of 30 pipeline companies with no brief — which reads as
+    a broken tool rather than a deliberate budget.
+50. **Times display in IST; storage stays UTC.** A database that mixes local times cannot be
+    compared, sorted or migrated safely, so `now_iso()` is unchanged and only rendering is
+    localised — `db.to_display()` in Python, a matching helper in the dashboard fed by
+    `display_tz` from `/api/summary`, so one env var (`DISPLAY_TZ_OFFSET_MIN` /
+    `DISPLAY_TZ_LABEL`) moves every timestamp in the product. A fixed offset rather than
+    zoneinfo: correct for India (no DST) and immune to containers shipped without tzdata.
+    Date-only values render without a clock label, because "25 Jul 2026 IST" reads like a bug.
+51. **The brief was reformatted for the person who has to read it.** It opens with the call in
+    plain words ("Worth a close look now"), then an At a glance table carrying the six things
+    a partner checks first — each cell keeping its [S:n] or [computed] marker, so the table
+    cannot become the place where uncited numbers hide. Section headings are now English
+    ("Money raised", "Who has backed them", "Signs of traction") instead of schema names, the
+    model's judgement is explicitly labelled as opinion rather than measurement, and a new
+    "What this brief can't tell you" section states the gaps — including, when true, "no
+    founder information found, team quality is unassessed". A reader who knows the shape of
+    the hole reads the rest correctly; one who doesn't over-trusts it. (The cohort key's pipe
+    character had to be escaped — "robotics|seed" silently split the markdown table cell.)
+52. **A formatting improvement that never reaches existing briefs isn't an improvement.**
+    After the layout rewrite, a search wrote 0 briefs: existing ones regenerate only when
+    their judgement is stubbed, so every stored brief kept the layout it was born with.
+    `FORMAT_MARKER` now detects briefs written by an older layout and rewrites them once
+    (verified it does not loop: after the rewrite the marker is present, so the trigger
+    clears). Rewriting exposed a second trap — regenerating without the judged dict would
+    have silently DOWNGRADED briefs that had real analysis back to [STUB], so
+    `_stored_judgement()` reads the judgement already persisted on the score row. And the
+    acceptance suite caught the third: that fallback initially made key-less briefs stop
+    saying [STUB], which breaks the core mandate, so reuse is now scoped to when the engine
+    could actually produce a judgement today.
+53. **Apify wired as a first-class adapter** (`engine/adapters/apify.py`), because the gap
+    between free sources and enterprise contracts is exactly where a scraping platform earns
+    its keep: ~$40/month against ~$40k/year. Three constraints shaped it. Amounts are parsed
+    by the SAME deterministic regex the RSS/HN adapters use, so a scraped headline meets the
+    identical evidence bar as a Form D filing and no model is ever asked what a number is.
+    Actor runs are snapshot-cached like every other source, so an offline demo replays real
+    previous output instead of producing an empty run that reads as "no deals found".
+    Self-reported headcount from a company's own About page is stored at confidence 0.5 with
+    source `apify:<actor>` — visibly weaker than Coresignal's measured figure — and when the
+    site says nothing the field records why. LinkedIn and X Actors are deliberately NOT
+    configured: both prohibit scraping in their terms, and the licensed routes for that data
+    are already wired. Verified against simulated Actor payloads: a funding headline yields
+    amount/stage/lead-investor and a resolved company, a non-funding result yields news with
+    no invented company, and no token yields an empty result with an honest health state.
+54. **Three defects found by reading one real emailed brief.** (a) The digest's "full brief"
+    link was `../briefs/<slug>.md` — a relative *filesystem* path, which resolves to nothing
+    in a mail client. Links that leave the app now use `PUBLIC_BASE_URL` (auto-derived from
+    `RENDER_EXTERNAL_HOSTNAME` when hosted) and point at `/api/brief/<id>`, which now renders
+    real HTML instead of raw markdown in a `<pre>` — a partner clicking from email gets a
+    document, and a company with no brief yet gets an explanation rather than a bare 404.
+    (b) Apify's `enrich_company()` existed but was never called by the pipeline, so headcount
+    stayed `— requires Coresignal` no matter what was wired; enrichment now runs it over the
+    top-ranked companies with a domain, capped at `APIFY_ENRICH_MAX` and logged when capped.
+    (c) Worst: scraped search results were becoming *companies*. A live run created pipeline
+    entries called `axios.com`, `linkedin.com`, `instagram.com` and "Best Defence Tech
+    Startups (2026)", which then appeared as **comparables in a real brief**. A company name
+    is now extracted only when the headline actually says a company raised money, and bare
+    domains, publisher names and listicles are rejected — 11/11 on the real bad cases. A
+    signal with no resolvable company is still stored with its URL: evidence without an
+    entity is honest, an invented entity is not.
+55. **The digest recipient is editable from the dashboard**, because "change who gets the
+    email" should not require a redeploy and an env var. Stored in a new `app_settings`
+    table rather than in `config/*.yaml`: YAML is the fund's stated intent and belongs in
+    git, while a recipient is runtime state that must survive a restart and travel with the
+    Supabase backup. The override wins over `DIGEST_TO`; clearing it falls back to the env
+    var rather than to nothing. Addresses are validated on save (max 5) — a malformed value
+    would otherwise fail silently at send time, hours later. The UI states the Resend
+    free-tier trap *where the address is typed*, not in a doc: without a verified domain
+    only the Resend account owner actually receives mail, so any other address is accepted
+    here and then bounces. And the note shows the saved address even when sending is
+    switched off, because otherwise a partner cannot tell whether their change was stored.
+56. **Three free adapters replace what the paid vendors were bought for.** Rather than
+    scraping X and LinkedIn (prohibited, and Actors break mid-demo), the substitutes are
+    sources that exist to be read. `ats_boards`: Greenhouse/Lever/Ashby public endpoints
+    give open roles and function mix — the Coresignal question ("is this team growing, in
+    which functions") answered by a *leading* indicator rather than a headcount snapshot,
+    and named `open_roles` so it is never confused for one. Velocity is computed from the
+    engine's OWN dated observations (one immutable signal per company per day), so a trend
+    is something the system measured, and a first reading honestly says "a trend needs two
+    runs". `bluesky`: the AT Protocol public appview needs no key and no permission, and
+    the watchlist is handle-based exactly like the X adapter, so an X budget later changes
+    nothing structural — with the honest caveat that Bluesky's investor population is
+    smaller, so this is real GP signal, not equal coverage. `wayback_team`: distinct profile
+    links on *archived copies of a company's own team page* give team growth with two
+    citable URLs; confidence 0.4 and the caveat travels with the number, because a redesign
+    skews it. Testing caught two bugs: "ML Research Scientist" classified as engineering
+    (function order now puts research first) and `www.` domains yielding no board slug.
+57. **Gatekeeper: the citation validator was checking punctuation, not truth.** The existing
+    `validate_brief()` asked whether a numeric claim carried a citation *marker*. Handed the
+    sentence "backed by Sequoia and Benchmark [S:99999]" it returned zero violations —
+    signal 99999 does not exist, no such investment row exists, and the fabrication passed
+    precisely *because* it was well formatted. A hallucination that cites is more dangerous
+    than one that doesn't. `engine/gatekeeper.py` resolves every model sentence against the
+    database instead: the cited signal must exist AND belong to this company (borrowing a
+    real id from another company is the failure a shape check can never see), every figure
+    must match a stored value to 1% (so `$12.5M` still matches a stored `12500000` — the
+    engine's own rounding must not read as invention), and every named firm must appear in
+    this company's evidence, checked against the `investors` table plus a built-in list of
+    well-known funds, since firms get invented far more often than they get misremembered
+    and carry the most weight with a reader.
+    Enforcement is per sentence: the offending sentence is dropped and replaced with a
+    visible marker, and the rest publishes. Killing a whole brief over one bad clause pushes
+    people back to reading raw signals, which is worse. Three details came out of testing.
+    (a) The audit footer originally quoted the removed text back — which put the invented
+    figure and its fake citation straight back on the page, where the citation validator
+    then correctly failed the brief; the footer now names categories only and the wording
+    lives in `gatekeeper_events`. (b) A rating whose *entire* justification was removed used
+    to render as "7/10 — [REMOVED…]": a confident number with its reasoning deleted, which
+    is the exact failure mode the module exists to stop, so the score is now nulled with its
+    reasoning. (c) Precision is tested as hard as recall — labelled opinion (`8/10`, "6
+    years"), honest statements of absence, and true sourced sentences must pass untouched,
+    because a filter that eats true sentences gets switched off within a week.
+    Deliberately NOT policed: labelled judgement. "Founder quality: 7/10" in a section
+    headed "What the AI makes of it" is an opinion the page already marks as one — the job
+    is stopping invented facts, not stopping the model from having a view. Removals are
+    counted on the dashboard and readable in full at `/api/gatekeeper`, so "nothing
+    unsourced is published" is falsifiable rather than asserted. 22 tests.
+58. **Two integrations that reported success while failing.** The Excel download answered
+    `{"detail":"workbook not generated yet"}` on the hosted engine while the dashboard above
+    it showed 498 companies and 43 briefs. The rows were never missing — the database is
+    durable (Supabase) but `output/` is not, so the workbook, a pure build artefact written
+    by the pipeline and served straight off disk, vanished on every deploy, restart and idle
+    spin-down. The fix is to stop treating the file as an output and start treating it as a
+    cache of the database: `ensure_workbook()` rebuilds it when it is absent, or when a score
+    has been written since it was made, so the download can never disagree with the dashboard
+    above it. Locked in as a regression: D11 now **deletes the file first** and requires the
+    download to work anyway.
+    Google Sheets had the same shape of bug one level up. `status()` reported
+    `configured: true` because a key file was found at `/etc/secrets/gsa.json` — and every
+    sync had been failing for a day with `[403] Google Drive API has not been used in project
+    819252726443`. Credentials being *found* and Google *accepting* them are different facts,
+    and only the first was being reported. Three unrelated problems all present as a bare 403
+    — an API switched off in the Cloud project, a sheet never shared with the robot account,
+    and a service account having no Drive storage of its own so it cannot *create* a sheet —
+    so `diagnose()` maps each to its cause, its fix and a direct console link (pulling the
+    project number out of Google's own error text, since that is the number the link needs).
+    The dashboard now shows a configured-but-failing sheet as failing, with the robot's
+    `client_email` — the address nobody can find when they need it — printed where the
+    problem is described. A **Test Google Sheet** button runs one real sync on demand, the
+    same pattern as Test AI connection. Two smaller fixes fell out: `GSHEET_ID` now takes the
+    Sheets-only path (opening by title goes through Drive, which is the API that was off),
+    and credentials may be given as a file path, inline JSON, or base64 — "put this JSON
+    somewhere on disk first" is exactly where a working key turns into an unconfigured
+    integration on hosts that only offer environment variables.
+59. **Three complaints, one cause: the running service was not the code.** The user reported
+    no Sheets test button, a broken Excel download and dead email links. All three were true
+    and none was a code fault: the hosted build predated the fixes. The repository folder on
+    the Mac still held the 6 August tree — `engine/gatekeeper.py` and every new adapter
+    absent, `briefs.py` back at its original version — while commits carrying the *right
+    messages* were being pushed on top of it. A stale zip was being re-applied (browsers do
+    not overwrite a download; they add " (1)"), so each push re-committed the same old tree
+    under a new name. Nothing in the product could distinguish "this feature is broken" from
+    "this feature was never deployed", which is the distinction that has to come first, so
+    `/api/version` now reports the build's commit and probes each capability **by import** —
+    a marker is true because the code answered, not because a constant claims it. An
+    incomplete build says so at the top of the dashboard in the loudest terms on the page,
+    because every other number on it is meaningless if that one is wrong. Delivery moved off
+    the zip entirely: files are written to the Mac directly and verified by hash.
+60. **Connections: test buttons for everything, because passive health lies by omission.**
+    A source read "ok" if the last scheduled run happened to succeed and an integration read
+    "configured" if a credential was found — both inferences from history, and both wrong at
+    least once here. `engine/connections.py` catalogues every dependency (each model in
+    models.yaml individually, the keyed services, all 22 sources) and tests each with one
+    real request on demand. Details that matter: models are probed with a judging-sized
+    prompt, since a two-word ping once passed in 0.8s while every real judgement timed out;
+    licensed sources report `license_required` as a PASS, because an adapter waiting on a
+    contract is not broken; adapters answering from the offline snapshot cache say so rather
+    than claiming to be live; the email test does NOT send mail, because a diagnostic that
+    spams a partner's inbox on every press is its own bug; and Test-everything runs
+    sequentially, since firing twenty live calls at once to make a dashboard feel responsive
+    is how you get rate-limited by the sources you depend on. Expensive adapters override
+    `probe()` — ats_boards asks the three providers for a deliberately nonsense slug, so a
+    clean 404 proves reachability without depending on any company's board existing today.
+61. **An email link that dead-ends teaches a partner the engine is broken.** The digest links
+    every top pick, but briefs are capped per day, so most links hit
+    `{"detail":"no validated brief for this company yet"}` — raw JSON, which reads as a blank
+    page. The engine held plenty on those companies; it simply had not written the page. The
+    brief is now generated on arrival: the daily cap governs what the engine spends
+    unprompted, and someone who clicked a link has asked. If generation fails, the page shows
+    every stored, sourced piece of evidence rather than an apology.

@@ -52,6 +52,7 @@ def get(path: str, method: str = "GET", binary: bool = False):
 
 def main() -> int:
     from engine import db
+    from engine.config import OUTPUT_DIR
 
     code, _ = get("/healthz")
     if code != 200:
@@ -141,12 +142,53 @@ def main() -> int:
           f"{len(real)} signals with fetchable urls")
 
     # D11 — workbook downloadable through the service (real .xlsx, not an error page)
+    # The file is deleted first ON PURPOSE. It used to be served straight off disk,
+    # which meant the download 404'd on any host with an ephemeral filesystem —
+    # every deploy, restart and idle spin-down — while the database still held
+    # every row. Serving it must not depend on a build artefact surviving.
+    wb_file = OUTPUT_DIR / "deal_pipeline.xlsx"
+    existed = wb_file.exists()
+    if existed:
+        wb_file.unlink()
     c, body = get("/api/workbook", binary=True)
     is_xlsx = isinstance(body, bytes) and body[:2] == b"PK"     # zip magic
-    check("D11 workbook served over HTTP as a real .xlsx",
+    check("D11 workbook is rebuilt from the database when the file is gone",
           c == 200 and is_xlsx and len(body) > 5000,
           f"{len(body) if isinstance(body, (bytes, str)) else 0} bytes, "
-          f"zip-magic={is_xlsx}")
+          f"zip-magic={is_xlsx}, file_was_deleted_first=True")
+
+    # D14 — every dependency is testable from the UI, and a licensed source that
+    # is waiting on a contract reports as such rather than as broken.
+    c, cat = get("/api/connections")
+    n = sum(len(cat.get(g, [])) for g in ("models", "integrations", "sources")) if c == 200 else 0
+    c2, lic = get("/api/connections/test?target=source:coresignal", method="POST")
+    check("D14 every model, key and source is individually testable from the dashboard",
+          c == 200 and n >= 20 and c2 == 200 and isinstance(lic, dict) and lic.get("skipped"),
+          f"{n} testable connections; licensed source reports "
+          f"{'licence-gated' if isinstance(lic, dict) and lic.get('skipped') else lic}")
+
+    # D15 — an email link must never dead-end. A digest links every top pick, but
+    # briefs are capped per day, so most links used to hit a raw JSON 404 that a
+    # partner reads as a broken engine. The page is now written on arrival.
+    no_brief = db.q1("""SELECT c.id, c.name FROM companies c
+                        WHERE c.is_synthetic=0 AND NOT EXISTS
+                        (SELECT 1 FROM briefs b WHERE b.company_id=c.id) LIMIT 1""")
+    if no_brief:
+        c, body = get(f"/api/brief/{no_brief['id']}")
+        html = isinstance(body, str) and "<html" in body and len(body) > 1500
+        check("D15 an email link to a company with no brief still renders a page",
+              c == 200 and html,
+              f"{no_brief['name']}: HTTP {c}, {len(body) if isinstance(body, str) else 0} bytes")
+    else:
+        check("D15 (every company already has a brief — nothing to test)", True, "")
+
+    # D16 — the running service can prove which build it is. Added after a week
+    # spent debugging features that had never been deployed.
+    c, v = get("/api/version")
+    check("D16 the running build reports its own identity and completeness",
+          c == 200 and isinstance(v, dict) and v.get("complete") is True,
+          f"commit {v.get('commit') if isinstance(v, dict) else '?'}, missing="
+          f"{v.get('missing') if isinstance(v, dict) else '?'}")
 
     # D12 — scheduler live in-process, honouring the search mode:
     # auto = the full job set; manual = housekeeping only, searches via button.

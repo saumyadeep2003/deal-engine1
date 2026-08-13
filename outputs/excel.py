@@ -11,6 +11,7 @@ rather than invisibly wrong.
 from __future__ import annotations
 import json
 import re
+from datetime import datetime, timezone
 from pathlib import Path
 
 from openpyxl import Workbook, load_workbook
@@ -396,6 +397,42 @@ def write_workbook(verbose: bool = True) -> Path:
     if verbose:
         print(f"  workbook written: {WORKBOOK} ({len(wb.sheetnames)} tabs)")
     return WORKBOOK
+
+
+def ensure_workbook(verbose: bool = False) -> Path:
+    """The workbook the download button serves — built on demand if it is not
+    already on disk and current.
+
+    The file used to be a pure build artefact: written by the pipeline, served
+    from disk. That works on a laptop and fails on hosted infrastructure, where
+    the disk is ephemeral. The database is durable (Supabase) but `output/` is
+    not, so after every deploy, restart or idle spin-down the dashboard showed
+    hundreds of tracked companies next to a download that answered "workbook not
+    generated yet" — the data was fine, only the artefact was missing.
+
+    So the file is now treated as a CACHE of the database rather than a separate
+    output. It is rebuilt when it is absent, or when a score has been written
+    since it was made. Rebuilding costs a couple of seconds and reads only rows
+    that already exist; serving a workbook that disagrees with the dashboard
+    above it would cost a great deal more.
+    """
+    if _workbook_is_current():
+        return WORKBOOK
+    return write_workbook(verbose=verbose)
+
+
+def _workbook_is_current() -> bool:
+    if not WORKBOOK.exists():
+        return False
+    try:
+        built_at = datetime.fromtimestamp(WORKBOOK.stat().st_mtime,
+                                          tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    except OSError:
+        return False
+    # A score written after the file was built means the dashboard and the
+    # download would disagree, which is worse than a slow download.
+    newer = db.q1("SELECT id FROM scores WHERE scored_at > ? LIMIT 1", (built_at,))
+    return not newer
 
 
 if __name__ == "__main__":

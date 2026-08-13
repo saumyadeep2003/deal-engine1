@@ -10,6 +10,7 @@ Bound to 127.0.0.1 by default — this is fund data on a laptop, not a public si
 """
 from __future__ import annotations
 import json
+import logging
 import os
 import sys
 from pathlib import Path
@@ -18,7 +19,7 @@ from fastapi import BackgroundTasks, FastAPI, HTTPException, Query
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from engine import db, llm, scoring  # noqa: E402
+from engine import db, gatekeeper, llm, scoring  # noqa: E402
 from engine.config import OUTPUT_DIR, ROOT, thesis  # noqa: E402
 
 STATIC = Path(__file__).resolve().parent / "static"
@@ -66,6 +67,18 @@ def dashboard() -> HTMLResponse:
 @app.get("/healthz")
 def healthz() -> dict:
     return {"ok": True, "time": db.now_iso()}
+
+
+@app.get("/api/version")
+def version() -> dict:
+    """Which build is actually serving this request.
+
+    Added after a week of debugging features that had never been deployed: the
+    repository had them, the running service did not, and nothing could tell the
+    two apart. Capability markers are probed by import, so a deploy that dropped
+    a file reports it instead of silently serving the previous code."""
+    from engine import version as _v
+    return _v.info()
 
 
 # ------------------------------------------------------------------------- data
@@ -126,6 +139,10 @@ def summary() -> dict:
         "job": _job_compat(),
         "search_mode": _search_mode(),
         "storage": db.backend_info(),
+        "display_tz": db.display_tz(),
+        # "nothing unsourced is published" is a claim; this is the evidence for it
+        "gatekeeper": gatekeeper.stats(),
+        "build": __import__("engine.version", fromlist=["_"]).info(),
         "generated_at": db.now_iso(),
     }
 
@@ -147,6 +164,10 @@ UNLOCKS = {
     "podcasts": "investor commentary from podcast transcripts",
     "substack_threads": "investor newsletter commentary",
     "the_information": "scoop-level reporting on rounds and hires",
+    "apify": "web-scraped funding mentions, self-reported team size and pricing pages",
+    "ats_boards": "open roles and function mix from public job boards (hiring velocity)",
+    "bluesky": "what tracked investors are posting — the free stand-in for the X API",
+    "wayback_team": "team growth from archived copies of a company's own team page",
 }
 
 
@@ -363,13 +384,100 @@ def provenance(company_id: int) -> dict:
             "score": dict(score) if score else None}
 
 
+BRIEF_CSS = """
+  :root { color-scheme: light dark }
+  body { font: 16px/1.65 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+         max-width: 760px; margin: 2.5rem auto; padding: 0 1.2rem; color: #1a1f26 }
+  h1 { font-size: 1.9rem; margin-bottom: .2rem; border-bottom: 3px solid #1F3B57;
+       padding-bottom: .4rem }
+  h2 { font-size: 1.15rem; margin-top: 2rem; color: #1F3B57 }
+  h3 { font-size: 1rem; margin-top: 1.4rem }
+  table { border-collapse: collapse; width: 100%; margin: .8rem 0 }
+  td { border-bottom: 1px solid #e3e8ee; padding: .5rem .6rem; vertical-align: top }
+  tr td:first-child { color: #5a6472; width: 38% }
+  blockquote { border-left: 3px solid #d0a215; background: #fdf8e8; margin: 1rem 0;
+               padding: .7rem 1rem; color: #5c4a12 }
+  code, pre { background: #f4f6f9; border-radius: 4px; padding: .1rem .3rem }
+  a { color: #1c5cab }
+  .back { display: inline-block; margin-bottom: 1.4rem; font-size: 14px }
+  @media (prefers-color-scheme: dark) {
+    body { background: #12161c; color: #e6eaf0 }
+    h2 { color: #9ec5f4 } td { border-color: #263040 }
+    tr td:first-child { color: #98a4b5 }
+    blockquote { background: #241f0e; color: #f0dfa8; border-color: #7a6115 }
+    code, pre { background: #1c222c } a { color: #6da7ec }
+  }
+"""
+
+
+def _brief_html(md: str, title: str) -> str:
+    """Render the brief as a readable page. A partner clicking 'read the full
+    brief' from an email should get a document, not raw markdown with ## and
+    table pipes. Falls back to preformatted text if the renderer is unavailable —
+    degraded but still legible."""
+    try:
+        import markdown as _md
+        body = _md.markdown(md, extensions=["tables", "sane_lists"])
+    except Exception:  # noqa: BLE001
+        from html import escape
+        body = f"<pre>{escape(md)}</pre>"
+    return (f"<!doctype html><html><head><meta charset='utf-8'>"
+            f"<meta name='viewport' content='width=device-width, initial-scale=1'>"
+            f"<title>{title}</title><style>{BRIEF_CSS}</style></head><body>"
+            f"<a class='back' href='/'>← back to the dashboard</a>{body}</body></html>")
+
+
 @app.get("/api/brief/{company_id}", response_class=HTMLResponse)
 def brief(company_id: int) -> HTMLResponse:
-    row = db.q1("""SELECT content_md FROM briefs WHERE company_id=? AND validated=1
-                   ORDER BY generated_at DESC LIMIT 1""", (company_id,))
+    """The page an email link lands on. It must never be empty.
+
+    It used to be: briefs are capped per day, the digest links every top pick,
+    so most links pointed at a company with no stored brief and returned raw
+    JSON — `{"detail":"no validated brief for this company yet"}` — which reads
+    to a partner as a broken link, not as a cap they have never heard of. The
+    engine held plenty on those companies; it just had not written the page.
+
+    So the brief is written on arrival. The daily cap governs how much the engine
+    spends unprompted; a partner who clicked a link has asked, and that is a
+    different budget."""
+    def _stored():
+        return db.q1("""SELECT content_md FROM briefs WHERE company_id=? AND validated=1
+                        ORDER BY generated_at DESC LIMIT 1""", (company_id,))
+
+    c = db.q1("SELECT name FROM companies WHERE id=?", (company_id,))
+    if not c:
+        return HTMLResponse(_brief_html(
+            f"# Company {company_id} not found\n\nThis link points at a company that is "
+            "no longer in the pipeline — it may have been merged into another record by "
+            "entity resolution.", "not found"), status_code=404)
+    name = c["name"]
+    row = _stored()
+
     if not row:
-        raise HTTPException(404, "no validated brief for this company yet")
-    return HTMLResponse(f"<pre>{row['content_md']}</pre>")
+        try:
+            from engine.briefs import generate_brief
+            from engine.judge import assess_company
+            judged = None if llm.stubbed() else assess_company(company_id)
+            generate_brief(company_id, "email_link", judged, verbose=False)
+            row = _stored()
+        except Exception as e:  # noqa: BLE001 — fall through to the honest page below
+            logging.getLogger("dealengine").warning(
+                "on-demand brief for company %s failed: %s", company_id, e)
+
+    if row:
+        return HTMLResponse(_brief_html(row["content_md"], f"{name} — intelligence brief"))
+
+    # Writing it failed (no key, provider down, validation refused it). Show what
+    # the engine actually holds rather than an apology: the evidence is the point.
+    from engine.briefs import _observed_sections
+    reason = ("the AI provider is not configured" if llm.stubbed()
+              else "the AI provider did not answer" if llm.circuit_open()
+              else "the brief could not be validated against its sources")
+    md = (f"# {name}\n\n*A full written brief could not be produced just now "
+          f"({reason}), so here is every piece of evidence the engine holds on this "
+          f"company — all of it sourced.* [computed]\n"
+          + _observed_sections(company_id))
+    return HTMLResponse(_brief_html(md, f"{name} — evidence"), status_code=200)
 
 
 @app.get("/api/brief/{company_id}/raw")
@@ -384,9 +492,20 @@ def brief_raw(company_id: int) -> dict:
 
 @app.get("/api/workbook")
 def workbook():
-    path = OUTPUT_DIR / "deal_pipeline.xlsx"
-    if not path.exists():
-        raise HTTPException(404, "workbook not generated yet")
+    """Serve the workbook, building it from the database if the file is not there.
+
+    The old version served a build artefact off disk and 404'd when it was
+    missing — which, on hosted infrastructure with an ephemeral filesystem, is
+    most of the time: the database survives a restart, `output/` does not. The
+    dashboard would show hundreds of tracked companies above a download button
+    that answered "workbook not generated yet". The rows existed the whole time;
+    only the file was gone."""
+    from outputs import excel
+    try:
+        path = excel.ensure_workbook()
+    except Exception as e:  # noqa: BLE001 — say what actually failed, never 404
+        raise HTTPException(500, f"workbook could not be built from the database: "
+                                 f"{type(e).__name__}: {e}") from e
     return FileResponse(path, filename="deal_pipeline.xlsx")
 
 
@@ -396,6 +515,37 @@ def latest_digest() -> HTMLResponse:
     if not files:
         raise HTTPException(404, "no digest rendered yet")
     return HTMLResponse(files[-1].read_text())
+
+
+@app.get("/api/gatekeeper")
+def gatekeeper_audit(limit: int = 50) -> dict:
+    """Every model-written claim the engine refused to publish, with the reason.
+
+    This endpoint exists so the anti-hallucination claim is falsifiable. Anyone —
+    a partner, an auditor, an interviewer — can read exactly what the model tried
+    to assert and why the engine would not stand behind it, instead of taking
+    "we validate our outputs" on trust."""
+    try:
+        rows = db.q("""SELECT g.id, g.company_id, c.name company, g.surface, g.ref,
+                              g.removed_count, g.detail_json, g.created_at
+                       FROM gatekeeper_events g
+                       LEFT JOIN companies c ON c.id=g.company_id
+                       ORDER BY g.id DESC LIMIT ?""", (min(limit, 200),))
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(503, f"gatekeeper audit unavailable: {e}") from e
+    return {"policy": {"enforcement": "drop the offending sentence, mark it in place, "
+                                      "publish the rest",
+                       "checks": ["cited signal must exist and belong to this company",
+                                  "every figure must match a stored value (1% tolerance)",
+                                  "every named party must appear in this company's evidence"],
+                       "marker": gatekeeper.REMOVED_MARKER},
+            "stats": gatekeeper.stats(),
+            "events": [{"id": r["id"], "company_id": r["company_id"],
+                        "company": r["company"], "surface": r["surface"], "ref": r["ref"],
+                        "removed_count": r["removed_count"],
+                        "at": db.to_display(r["created_at"]),
+                        "removed": json.loads(r["detail_json"] or "[]")}
+                       for r in rows]}
 
 
 # ------------------------------------------------------------------- interaction
@@ -474,11 +624,93 @@ def refresh(full: bool = True) -> dict:
 
 
 @app.post("/api/llm/test")
-def llm_test() -> dict:
+def llm_test(model: str | None = None, hard: bool = False) -> dict:
     """Make one real call to the model provider and report exactly what happened —
-    key rejected, model unavailable, out of credits, or working."""
+    key rejected, model unavailable, out of credits, too slow, or working.
+
+    `model=` probes any model without a redeploy; `hard=true` uses a judging-sized
+    prompt, which is the only test that reflects what the pipeline actually does."""
     _budget_or_429("llm_test")
-    return llm.self_test()
+    return llm.self_test(model_override=model, hard=hard)
+
+
+@app.get("/api/connections")
+def connections_list() -> dict:
+    """Everything this engine depends on, in one place, each with a way to test it."""
+    from engine import connections
+    return connections.catalogue()
+
+
+@app.post("/api/connections/test")
+def connections_test(target: str = Query(..., min_length=3)) -> dict:
+    """Test ONE dependency with a real request, right now.
+
+    Passive health — "the last scheduled run succeeded" — is an inference from
+    history, and this project has already been burnt twice by trusting it: a
+    Google Sheet that had been failing for a day still read as connected, and a
+    model that answered a two-word prompt in under a second was reported healthy
+    while every real judgement timed out. Pressing a button and watching the
+    provider answer is a different kind of evidence."""
+    _budget_or_429("llm_test")
+    from engine import connections
+    return connections.test(target)
+
+
+@app.post("/api/connections/test-all")
+def connections_test_all(group: str | None = None) -> dict:
+    """Run every target, or one group. Sequential — see connections.test_all."""
+    _budget_or_429("refresh")
+    from engine import connections
+    results = connections.test_all(group)
+    return {"group": group or "all", "results": results,
+            "passed": sum(1 for r in results if r.get("ok")),
+            "total": len(results)}
+
+
+@app.post("/api/sheets/test")
+def sheets_test() -> dict:
+    """Try one real sync and report exactly what Google said, translated.
+
+    "Configured" only means a key file was found. Everything that actually
+    breaks a Sheets integration happens after that — an API switched off in the
+    Cloud project, a sheet never shared with the robot account, a service account
+    with no Drive storage — and all three surface as an indistinguishable 403 in
+    a log nobody is reading. This turns one into a sentence and a link."""
+    _budget_or_429("llm_test")
+    from outputs import gsheets
+    if not gsheets.configured():
+        return {"ok": False, "reason": "no service-account credentials found",
+                "hint": "Set GOOGLE_SERVICE_ACCOUNT_JSON to the key file path (Render: add "
+                        "a Secret File and point at /etc/secrets/<name>.json) or paste the "
+                        "JSON itself into that variable."}
+    res = gsheets.sync(verbose=False)
+    out = {"ok": res.get("status") == "ok", "status": res.get("status"),
+           "url": res.get("spreadsheet_url"), "tabs_written": res.get("tabs_written"),
+           "edits_pulled": res.get("edits_pulled"), "detail": res.get("detail"),
+           "service_account_email": gsheets.service_account_email()}
+    if not out["ok"]:
+        out["diagnosis"] = gsheets.diagnose(res.get("detail"))
+    return out
+
+
+@app.post("/api/settings/digest-recipients")
+def set_digest_recipients(to: str = "") -> dict:
+    """Change where the digest is emailed, without a redeploy. Comma-separated;
+    an empty value clears the override and falls back to the DIGEST_TO env var."""
+    _budget_or_429("decision")
+    from outputs import email_send
+    res = email_send.set_recipients(to)
+    if not res.get("ok"):
+        return JSONResponse(res, status_code=400)
+    return {**res, "status": email_send.status()}
+
+
+@app.post("/api/apify/test")
+def apify_test() -> dict:
+    """Check the Apify token with one cheap call, and say exactly what came back."""
+    _budget_or_429("llm_test")
+    from engine.adapters.apify import self_test as apify_self_test
+    return apify_self_test()
 
 
 @app.get("/api/run/plan")
