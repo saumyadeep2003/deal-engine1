@@ -365,13 +365,64 @@ def provenance(company_id: int) -> dict:
             "score": dict(score) if score else None}
 
 
+BRIEF_CSS = """
+  :root { color-scheme: light dark }
+  body { font: 16px/1.65 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+         max-width: 760px; margin: 2.5rem auto; padding: 0 1.2rem; color: #1a1f26 }
+  h1 { font-size: 1.9rem; margin-bottom: .2rem; border-bottom: 3px solid #1F3B57;
+       padding-bottom: .4rem }
+  h2 { font-size: 1.15rem; margin-top: 2rem; color: #1F3B57 }
+  h3 { font-size: 1rem; margin-top: 1.4rem }
+  table { border-collapse: collapse; width: 100%; margin: .8rem 0 }
+  td { border-bottom: 1px solid #e3e8ee; padding: .5rem .6rem; vertical-align: top }
+  tr td:first-child { color: #5a6472; width: 38% }
+  blockquote { border-left: 3px solid #d0a215; background: #fdf8e8; margin: 1rem 0;
+               padding: .7rem 1rem; color: #5c4a12 }
+  code, pre { background: #f4f6f9; border-radius: 4px; padding: .1rem .3rem }
+  a { color: #1c5cab }
+  .back { display: inline-block; margin-bottom: 1.4rem; font-size: 14px }
+  @media (prefers-color-scheme: dark) {
+    body { background: #12161c; color: #e6eaf0 }
+    h2 { color: #9ec5f4 } td { border-color: #263040 }
+    tr td:first-child { color: #98a4b5 }
+    blockquote { background: #241f0e; color: #f0dfa8; border-color: #7a6115 }
+    code, pre { background: #1c222c } a { color: #6da7ec }
+  }
+"""
+
+
+def _brief_html(md: str, title: str) -> str:
+    """Render the brief as a readable page. A partner clicking 'read the full
+    brief' from an email should get a document, not raw markdown with ## and
+    table pipes. Falls back to preformatted text if the renderer is unavailable —
+    degraded but still legible."""
+    try:
+        import markdown as _md
+        body = _md.markdown(md, extensions=["tables", "sane_lists"])
+    except Exception:  # noqa: BLE001
+        from html import escape
+        body = f"<pre>{escape(md)}</pre>"
+    return (f"<!doctype html><html><head><meta charset='utf-8'>"
+            f"<meta name='viewport' content='width=device-width, initial-scale=1'>"
+            f"<title>{title}</title><style>{BRIEF_CSS}</style></head><body>"
+            f"<a class='back' href='/'>← back to the dashboard</a>{body}</body></html>")
+
+
 @app.get("/api/brief/{company_id}", response_class=HTMLResponse)
 def brief(company_id: int) -> HTMLResponse:
     row = db.q1("""SELECT content_md FROM briefs WHERE company_id=? AND validated=1
                    ORDER BY generated_at DESC LIMIT 1""", (company_id,))
+    c = db.q1("SELECT name FROM companies WHERE id=?", (company_id,))
+    name = c["name"] if c else f"company {company_id}"
     if not row:
-        raise HTTPException(404, "no validated brief for this company yet")
-    return HTMLResponse(f"<pre>{row['content_md']}</pre>")
+        # a dead-end 404 from an email link is a bad experience; say what happened
+        return HTMLResponse(_brief_html(
+            f"# {name}\n\nNo brief has been written for this company yet.\n\n"
+            "Briefs are written for the highest-ranked companies on each search, "
+            "up to a daily cap. Open the dashboard and press **Search for new "
+            "deals**, or use the company's row to request one.",
+            f"{name} — no brief yet"), status_code=404)
+    return HTMLResponse(_brief_html(row["content_md"], f"{name} — intelligence brief"))
 
 
 @app.get("/api/brief/{company_id}/raw")
@@ -484,6 +535,18 @@ def llm_test(model: str | None = None, hard: bool = False) -> dict:
     prompt, which is the only test that reflects what the pipeline actually does."""
     _budget_or_429("llm_test")
     return llm.self_test(model_override=model, hard=hard)
+
+
+@app.post("/api/settings/digest-recipients")
+def set_digest_recipients(to: str = "") -> dict:
+    """Change where the digest is emailed, without a redeploy. Comma-separated;
+    an empty value clears the override and falls back to the DIGEST_TO env var."""
+    _budget_or_429("decision")
+    from outputs import email_send
+    res = email_send.set_recipients(to)
+    if not res.get("ok"):
+        return JSONResponse(res, status_code=400)
+    return {**res, "status": email_send.status()}
 
 
 @app.post("/api/apify/test")

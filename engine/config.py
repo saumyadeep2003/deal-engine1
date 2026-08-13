@@ -59,3 +59,11 @@ LOG_DIR = ROOT / "logs"
 IS_HOSTED = bool(env("RENDER") or env("DEAL_ENGINE_HOSTED"))
 WEB_HOST = env("DEAL_ENGINE_HOST", "0.0.0.0" if IS_HOSTED else "127.0.0.1")
 WEB_PORT = int(env("PORT") or env("DEAL_ENGINE_PORT") or "8787")
+
+# Absolute base for links that leave the app (email, digests). A relative path
+# like ../briefs/x.md resolves to nothing in a mail client — which is exactly why
+# "full brief" links in the digest opened a blank page.
+PUBLIC_BASE_URL = (env("PUBLIC_BASE_URL")
+                   or (f"https://{env('RENDER_EXTERNAL_HOSTNAME')}"
+                       if env("RENDER_EXTERNAL_HOSTNAME") else "")
+                   or f"http://127.0.0.1:{WEB_PORT}").rstrip("/")

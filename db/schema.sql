@@ -319,3 +319,13 @@ CREATE TABLE IF NOT EXISTS sheet_sync (
   detail TEXT,
   synced_at TEXT NOT NULL
 );
+
+-- Small key/value store for settings a partner can change from the dashboard
+-- (e.g. the digest recipient). Deliberately separate from config/*.yaml: YAML is
+-- the fund's stated intent and belongs in git; this is runtime state and belongs
+-- in the database, so it survives a restart and follows the Supabase backup.
+CREATE TABLE IF NOT EXISTS app_settings (
+  key TEXT PRIMARY KEY,
+  value TEXT,
+  updated_at TEXT NOT NULL
+);

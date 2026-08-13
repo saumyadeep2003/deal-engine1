@@ -9,7 +9,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from engine import db, llm, scoring  # noqa: E402
-from engine.config import OUTPUT_DIR, thesis  # noqa: E402
+from engine.config import OUTPUT_DIR, PUBLIC_BASE_URL, thesis  # noqa: E402
 from engine.filters import match_theme  # noqa: E402
 
 DIGEST_DIR = OUTPUT_DIR / "digests"
@@ -110,9 +110,10 @@ def build_digest(verbose: bool = True) -> Path:
                 rationale += judged["thesis_narrative"][:300]
         else:
             rationale += llm.STUB_TEXT
-        slug_link = f"../briefs/{c['name'].lower().replace(' ', '-')[:60]}.md"
+        # absolute, or the link is dead the moment the digest leaves the server
+        link = f"{PUBLIC_BASE_URL}/api/brief/{c['id']}"
         return (f"<div class='deal'><b>{c['name']}</b> — {c['sub_sector'] or c['sector'] or ''}"
-                f" <a href='{slug_link}'>full brief</a><p>{rationale}</p></div>")
+                f" <a href='{link}'>read the full brief</a><p>{rationale}</p></div>")
 
     def sector_html(s):
         return (f"<div><b>{s['label']}</b> — signal/consensus {s['ratio']}"

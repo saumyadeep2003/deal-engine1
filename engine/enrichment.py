@@ -8,6 +8,7 @@ as '— (requires X)'. Per-field TTL cache with source + confidence.
 """
 from __future__ import annotations
 import json
+import os
 import re
 from datetime import datetime, timezone
 
@@ -185,15 +186,57 @@ def enrich_company(company_id: int, http: _Http | None = None) -> None:
                   unavailable_reason=f"requires {vendor}")
 
 
+APIFY_ENRICH_MAX = int(os.environ.get("APIFY_ENRICH_MAX", "10"))
+
+
 def run_enrichment(verbose: bool = True) -> int:
     rows = db.q("SELECT id FROM companies WHERE is_synthetic=0 AND status IN"
                 " ('pipeline','hot','watchlist')")
     http = _Http()
     for r in rows:
         enrich_company(r["id"], http)
+
+    # Apify crawls the company's own site for self-reported team size and pricing.
+    # Only the top-ranked companies, because each is a paid Actor run: enriching
+    # 300 companies would cost more than the plan and take an hour. Silently
+    # capped is how a bill surprises someone, so the cap is logged.
+    apify_done = _apify_enrich_top(verbose=verbose)
+
     if verbose:
-        print(f"  enriched {len(rows)} surviving companies (licensed fields -> null + reason)")
+        print(f"  enriched {len(rows)} surviving companies (licensed fields -> null + reason)"
+              + (f"; apify crawled {apify_done} top companies" if apify_done else ""))
     return len(rows)
+
+
+def _apify_enrich_top(verbose: bool = True) -> int:
+    """Run the Apify site crawl over the highest-ranked companies that have a
+    domain. No token -> does nothing and says nothing (the adapter already reports
+    its own switched-off state in Source Health)."""
+    try:
+        from .adapters.apify import _adapter_from_config
+        from .adapters.apify import enrich_company as apify_enrich
+    except Exception:  # noqa: BLE001 — a missing optional adapter must not stop enrichment
+        return 0
+    adapter = _adapter_from_config()
+    if not adapter or not adapter.configured:
+        return 0
+    top = db.q("""SELECT c.id FROM companies c JOIN scores s ON s.company_id=c.id
+                  WHERE s.id=(SELECT id FROM scores WHERE company_id=c.id
+                              ORDER BY scored_at DESC, id DESC LIMIT 1)
+                  AND c.is_synthetic=0 AND c.domain IS NOT NULL
+                  AND c.status IN ('hot','watchlist')
+                  ORDER BY s.percentile DESC LIMIT ?""", (APIFY_ENRICH_MAX,))
+    n = 0
+    for r in top:
+        try:
+            if apify_enrich(r["id"], adapter=adapter).get("ok"):
+                n += 1
+        except Exception as exc:  # noqa: BLE001
+            print(f"  ! apify enrich failed for company {r['id']}: {type(exc).__name__}")
+    if verbose and len(top) == APIFY_ENRICH_MAX:
+        print(f"  (apify enrichment capped at {APIFY_ENRICH_MAX} companies —"
+              f" raise APIFY_ENRICH_MAX to crawl more)")
+    return n
 
 
 def display_value(company_id: int, field: str):

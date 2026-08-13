@@ -60,6 +60,41 @@ EMPLOYEE_COUNT_RE = re.compile(
     r"\b(\d{1,5})(?:\s*\+)?\s*(?:employees|team members|people)\b", re.I)
 
 
+# A web search returns articles, listicles and bare domains. Left unguarded, the
+# first live run created pipeline "companies" called axios.com, linkedin.com and
+# "Best Defence Tech Startups (2026)" — and they then appeared as *comparables* in
+# real briefs. Search noise must never become an entity.
+RAISE_VERB_RE = re.compile(
+    r"^(?P<name>.{2,60}?)\s+(?:raises|raised|secures|secured|closes|closed|lands|landed|nabs)\b",
+    re.I)
+LISTICLE_RE = re.compile(
+    r"^\s*(?:the\s+)?(?:best|top|\d+\s+best|\d+\s+top|leading|list of|guide to|"
+    r"how|why|what|inside|meet)\b", re.I)
+BARE_DOMAIN_RE = re.compile(r"^[\w-]+(\.[\w-]+)+$")          # axios.com, linkedin.com
+PLATFORM_NAMES = {"linkedin", "instagram", "facebook", "twitter", "x", "youtube",
+                  "medium", "substack", "reddit", "crunchbase", "pitchbook", "techcrunch",
+                  "forbes", "bloomberg", "axios", "reuters", "wikipedia", "github"}
+
+
+def _company_from_title(title: str) -> str | None:
+    """A company name only when the headline actually says a company raised money.
+
+    Anything else — a listicle, a bare domain, a publisher's name — returns None,
+    and the signal is still stored with its URL. Evidence without a resolved
+    company is honest; a made-up company is not.
+    """
+    m = RAISE_VERB_RE.match(title.strip())
+    if not m:
+        return None
+    cand = (m.group("name") or "").strip(" \t\"'“”‘’,.;:-—–")
+    if BARE_DOMAIN_RE.match(cand) or LISTICLE_RE.match(cand):
+        return None
+    head = re.split(r"[\s.,]", cand.lower())[0].replace(".com", "")
+    if head in PLATFORM_NAMES:
+        return None
+    return clean_company_name(cand)
+
+
 class ApifyNotConfigured(RuntimeError):
     """Raised when an Apify call is attempted with no token. Callers degrade."""
 
@@ -199,8 +234,7 @@ class ApifyAdapter(BaseAdapter):
         if led:
             payload["lead_investor"] = led.group(1).strip()
 
-        name = clean_company_name(title.split(" raises")[0].split(" secures")[0]
-                                  .split(" closes")[0].split(" lands")[0])
+        name = _company_from_title(title) if kind == "funding_event" else None
         return Signal(
             kind=kind,
             observed_at=(res.get("date") or db.now_iso()),

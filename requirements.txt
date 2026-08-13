@@ -19,5 +19,8 @@ python-dotenv>=1.0
 gspread>=6.0
 google-auth>=2.30
 
+# Readable HTML briefs (email 'full brief' links land on a rendered page)
+markdown>=3.5
+
 # Optional durable database (Supabase/Postgres via DATABASE_URL; SQLite otherwise)
 psycopg[binary]>=3.1

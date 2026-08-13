@@ -226,6 +226,18 @@ details.explain p { color:var(--ink-2); font-size:12.5px; margin:6px 0 0; }
       <a id="dlWorkbook" href="/api/workbook" download><button>⬇ Download Excel</button></a>
     </div>
   </div>
+  <!-- who the summary email goes to — editable without a redeploy -->
+  <div id="mailRow" style="border-top:1px solid var(--border); margin-top:12px;
+       padding-top:10px; display:flex; gap:8px; align-items:center; flex-wrap:wrap">
+    <label for="mailTo" style="font-size:13px"><b>Email the summary to</b></label>
+    <input id="mailTo" type="text" placeholder="name@fund.com, second@fund.com"
+           style="flex:1; min-width:240px; padding:5px 8px; font-size:13px;
+                  border:1px solid var(--border); border-radius:6px;
+                  background:var(--bg); color:var(--ink)">
+    <button id="btnMailSave" style="font-size:12px; padding:4px 10px">Save</button>
+    <span id="mailNote" class="ssub" style="color:var(--ink-2); font-size:12px"></span>
+  </div>
+
   <!-- live step-by-step progress, visible only while a search runs -->
   <div id="stepPanel" hidden style="border-top:1px solid var(--border); margin-top:12px;
        padding-top:10px">
@@ -1189,6 +1201,46 @@ function fmtTime(iso, dateOnly) {
                   : s.slice(0, 16).replace("T", " ") + " " + TZ.label;
 }
 
+
+/* ---- digest recipient ---------------------------------------------------- */
+function renderMailRow(email) {
+  const inp = $("#mailTo"), note = $("#mailNote");
+  if (!inp) return;
+  if (document.activeElement !== inp) inp.value = (email.to || []).join(", ");
+  // Show the saved recipient even when sending is switched off — otherwise a
+  // partner cannot tell whether their address was stored, only that mail is off.
+  const who = (email.to || []).length
+    ? ((email.to_source === "dashboard" ? "Saved here" : "From server settings")
+       + ": " + email.to.join(", "))
+    : "No recipient set yet";
+  const off = email.configured ? "" :
+    " · sending is switched off (no email key), so summaries are saved as files";
+  note.textContent = who + off;
+}
+$("#btnMailSave").onclick = async () => {
+  const b = $("#btnMailSave"), inp = $("#mailTo"), note = $("#mailNote");
+  b.disabled = true; b.textContent = "Saving…";
+  let d = {};
+  try {
+    d = await (await fetch("/api/settings/digest-recipients?to=" +
+        encodeURIComponent(inp.value), { method: "POST" })).json();
+  } catch (e) { d = { ok: false, reason: "the engine did not respond" }; }
+  if (d.ok) {
+    note.textContent = (d.to || []).length
+      ? "Saved — the next summary goes to " + d.to.join(", ")
+      : "Cleared — using the server's own setting again.";
+    toast((d.to || []).length
+      ? "Summary emails will now go to " + d.to.join(", ") +
+        ". Note: on Resend's free tier only the address that owns the Resend account " +
+        "actually receives mail until you verify a domain."
+      : "Recipient cleared — falling back to the server setting.");
+  } else {
+    note.textContent = "Not saved: " + (d.reason || "unknown error");
+  }
+  b.disabled = false; b.textContent = "Save";
+  setTimeout(loadAll, 800);
+};
+
 let _planCache = null;
 async function loadPlan() {
   try { _planCache = _planCache || await (await fetch("/api/run/plan")).json(); }
@@ -1344,6 +1396,7 @@ async function loadAll() {
   }
   $("#hdrSub") && ($("#hdrSub").textContent = "");
   if (s.display_tz) TZ = s.display_tz;   // one config change moves every timestamp
+  renderMailRow(s.email || {});
   renderStatus(s);
   loadPlan();
 
