@@ -37,7 +37,14 @@ import time as _time
 _BUDGETS: dict[str, list] = {}          # name -> [window_start_epoch, count]
 _LIMITS = {"chat": (3600, 60), "scan": (3600, 120), "refresh": (3600, 6),
            "brief": (3600, 12), "decision": (3600, 60), "digest_send": (3600, 6),
-           "llm_test": (3600, 20)}
+           # A model probe spends tokens, so it stays tightly capped. A source or
+           # service probe is an ordinary HTTP request and must NOT share that
+           # budget: the connections panel has 29 rows, and charging them all to
+           # the model allowance meant one press of "Test everything" exhausted
+           # the hour and the next 26 rows answered "rate limited" — a diagnostic
+           # that breaks when you use it as intended.
+           "llm_test": (3600, 40), "connection_test": (3600, 400),
+           "connection_test_all": (3600, 20)}
 
 
 def _within_budget(name: str) -> bool:
@@ -651,7 +658,9 @@ def connections_test(target: str = Query(..., min_length=3)) -> dict:
     model that answered a two-word prompt in under a second was reported healthy
     while every real judgement timed out. Pressing a button and watching the
     provider answer is a different kind of evidence."""
-    _budget_or_429("llm_test")
+    # priced by what the probe actually costs, not by which endpoint it arrived at
+    _budget_or_429("llm_test" if target.startswith("model:")
+                   or target == "integration:llm_provider" else "connection_test")
     from engine import connections
     return connections.test(target)
 
@@ -659,7 +668,7 @@ def connections_test(target: str = Query(..., min_length=3)) -> dict:
 @app.post("/api/connections/test-all")
 def connections_test_all(group: str | None = None) -> dict:
     """Run every target, or one group. Sequential — see connections.test_all."""
-    _budget_or_429("refresh")
+    _budget_or_429("connection_test_all")
     from engine import connections
     results = connections.test_all(group)
     return {"group": group or "all", "results": results,

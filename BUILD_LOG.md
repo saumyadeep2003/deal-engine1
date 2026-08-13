@@ -499,3 +499,20 @@ Chronological log of judgment calls made while building. Part of the deliverable
     brief is now generated on arrival: the daily cap governs what the engine spends
     unprompted, and someone who clicked a link has asked. If generation fails, the page shows
     every stored, sourced piece of evidence rather than an apology.
+62. **Two faults the connections panel exposed within minutes of going live — both mine.**
+    First, the panel's 29 probes were all charged to the `llm_test` budget (20/hour), which
+    exists to stop a crawler draining the model quota. One press of "Test everything" spent
+    the hour and the remaining rows answered "rate limited": a diagnostic that breaks when
+    used as intended is worse than no diagnostic. Budgets are now priced by what a probe
+    actually costs — a model probe spends tokens and stays tightly capped; a source probe is
+    an ordinary HTTP request and gets its own generous allowance.
+    Second, the very first *successful* Google Sheets sync returned
+    `[429] Quota exceeded for 'Write requests per minute per user'`. Eleven tabs were costing
+    five write calls each — clear, resize, update, freeze, format — which is fifty-five
+    requests against a sixty-per-minute quota, and over a minute of round trips. The whole
+    workbook is one payload and is now sent as one: a batched clear plus a batched update, so
+    a refresh is two write calls no matter how many tabs the workbook grows to. Resize only
+    fires when the data outgrew the grid, header styling is applied when a tab is born rather
+    than re-sent every sync, and a 429 is retried with backoff because a per-minute quota is
+    a "wait", not a "no" — failing the sync and telling the user their credentials are broken
+    would have been the third wrong diagnosis of the same afternoon.

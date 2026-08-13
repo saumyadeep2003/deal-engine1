@@ -109,6 +109,13 @@ def diagnose(detail: str | None) -> dict | None:
                        "(Setting GSHEET_ID to an existing sheet avoids needing Drive at all.)",
                 "url": f"https://console.developers.google.com/apis/api/{host}/overview"
                        + (f"?project={proj}" if proj else "")}
+    if "429" in d or "write requests per minute" in d:
+        return {"cause": "Google's per-minute write quota was hit, not a credentials "
+                         "problem — the sheet is reachable",
+                "fix": "Wait a minute and test again. Each sync now sends the whole "
+                       "workbook in two write calls, so this should only appear if "
+                       "several syncs overlapped.",
+                "url": None}
     if "storagequotaexceeded" in d or "quota" in d and "storage" in d:
         return {"cause": "a service account has no Drive storage of its own, so it "
                          "cannot create a spreadsheet",
@@ -183,6 +190,44 @@ def _open_sheet(gc, creds):
               " Set GSHEET_SHARE_WITH=you@gmail.com, or use GSHEET_ID of a sheet you"
               " already shared with the service-account email.")
         return sh
+
+
+def _retry(call, attempts: int = 4):
+    """Google's write quota is per minute, so a 429 is a 'wait', not a 'no'.
+
+    Batching means we should rarely see one; when we do — a partner pressing Test
+    twice, two runs overlapping — sleeping and retrying is the correct response,
+    and failing the whole sync while telling the user their credentials are broken
+    is not."""
+    import time
+    for i in range(attempts):
+        try:
+            return call()
+        except Exception as exc:  # noqa: BLE001
+            msg = str(exc)
+            transient = "429" in msg or "Quota exceeded" in msg or "[503]" in msg
+            if not transient or i == attempts - 1:
+                raise
+            time.sleep(min(2 ** i * 5, 40))     # 5s, 10s, 20s — quota is per minute
+    return None
+
+
+def _header_requests(sheet_id: int, n_cols: int) -> list[dict]:
+    """Freeze + style row 1, as raw API requests so they can ride in one batch."""
+    return [
+        {"updateSheetProperties": {
+            "properties": {"sheetId": sheet_id,
+                           "gridProperties": {"frozenRowCount": 1}},
+            "fields": "gridProperties.frozenRowCount"}},
+        {"repeatCell": {
+            "range": {"sheetId": sheet_id, "startRowIndex": 0, "endRowIndex": 1,
+                      "startColumnIndex": 0, "endColumnIndex": max(n_cols, 1)},
+            "cell": {"userEnteredFormat": {
+                "textFormat": {"bold": True,
+                               "foregroundColor": {"red": 1, "green": 1, "blue": 1}},
+                "backgroundColor": {"red": 0.12, "green": 0.23, "blue": 0.34}}},
+            "fields": "userEnteredFormat(textFormat,backgroundColor)"}},
+    ]
 
 
 def pull_human_edits(sh, partner: str = "partner", verbose: bool = True) -> int:
@@ -273,24 +318,47 @@ def sync(xlsx_path: Path | None = None, verbose: bool = True) -> dict:
         sh = _open_sheet(gc, creds)
         edits = pull_human_edits(sh, verbose=verbose)   # read BEFORE writing
         tabs = _tab_data(xlsx_path)
-        existing = {w.title for w in sh.worksheets()}
+        # Eleven tabs used to cost five write calls each — clear, resize, update,
+        # freeze, format — which is fifty-five requests against a sixty-per-minute
+        # quota, for a sync that also took over a minute of round trips. It worked
+        # exactly until it didn't:
+        #   [429] Quota exceeded for 'Write requests per minute per user'
+        # A rate limit hit on the FIRST successful sync is not a Google problem,
+        # it is a design problem: the whole workbook is one payload and should be
+        # sent as one. Batched, a refresh is two write calls regardless of how
+        # many tabs the workbook grows to.
+        existing = {w.title: w for w in sh.worksheets()}
+        created: list[tuple[str, int]] = []
         for name, rows in tabs:
             n_rows = max(len(rows), 2)
             n_cols = max((len(r) for r in rows), default=1)
-            if name in existing:
-                ws = sh.worksheet(name)
-                ws.clear()
-                ws.resize(rows=n_rows, cols=n_cols)
-            else:
-                ws = sh.add_worksheet(title=name, rows=n_rows, cols=n_cols)
-            if rows:
-                ws.update(values=rows, range_name="A1")
-                ws.freeze(rows=1)
-                ws.format(f"A1:{chr(64 + min(n_cols, 26))}1",
-                          {"textFormat": {"bold": True,
-                                          "foregroundColor": {"red": 1, "green": 1, "blue": 1}},
-                           "backgroundColor": {"red": 0.12, "green": 0.23, "blue": 0.34}})
-        for stale in existing - {n for n, _ in tabs} - {"Sheet1"}:
+            ws = existing.get(name)
+            if ws is None:
+                ws = _retry(lambda: sh.add_worksheet(title=name, rows=n_rows, cols=n_cols))
+                existing[name] = ws
+                created.append((name, n_cols))
+            elif ws.row_count < n_rows or ws.col_count < n_cols:
+                # only when the data outgrew the grid — a resize on every sync is
+                # a write call spent to change nothing
+                _retry(lambda: ws.resize(rows=max(n_rows, ws.row_count),
+                                         cols=max(n_cols, ws.col_count)))
+
+        # 1 call: wipe every tab's old contents
+        _retry(lambda: sh.values_batch_clear(
+            {"ranges": [f"'{name}'" for name, _ in tabs]}))
+        # 1 call: write every tab's new contents
+        _retry(lambda: sh.values_batch_update({
+            "valueInputOption": "RAW",
+            "data": [{"range": f"'{name}'!A1", "values": rows}
+                     for name, rows in tabs if rows]}))
+
+        # Header styling is a property of the tab, not of the data, so it is
+        # applied once when the tab is born rather than re-sent on every refresh.
+        if created:
+            _retry(lambda: sh.batch_update({"requests": [
+                r for name, n_cols in created
+                for r in _header_requests(existing[name].id, n_cols)]}))
+        for stale in set(existing) - {n for n, _ in tabs} - {"Sheet1"}:
             pass  # never delete partner-created tabs
         rec = {"status": "ok", "spreadsheet_id": sh.id, "spreadsheet_url": sh.url,
                "tabs_written": len(tabs), "edits_pulled": edits,
