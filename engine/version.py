@@ -67,6 +67,9 @@ def features() -> dict:
         "ist_timestamps": _has("engine.db", "to_display"),
         "hiring_from_free_sources": _has("engine.hiring", "summary_line"),
         "coverage_report": _has("engine.coverage", "report"),
+        "company_profiles": _has("engine.profile", "section"),
+        "founders_from_filings": _has("engine.people", "sync_from_filings"),
+        "criteria_estimates": _has("engine.estimates", "criteria_scorecard"),
     }
 
 

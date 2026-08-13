@@ -42,11 +42,19 @@ def _strip(t: str | None) -> str | None:
 class EdgarFormDAdapter(BaseAdapter):
     name = "edgar_formd"
     interval_minutes = 360
-    max_detail_fetches = 15   # per run; keep the demo under budget
+    # The detail XML is the ONLY place a Form D names its people, its offering
+    # amount and its incorporation year. At 15 per run, 205 of 220 filings never
+    # had theirs read — which is why "Founders identified" sat at 0 of 160 while
+    # the filings that name them were already in the database. SEC asks for a
+    # descriptive User-Agent and under 10 requests/second; it does not charge, and
+    # it does not ration. The old cap was protecting a budget that does not exist.
+    max_detail_fetches = 150   # per run, overridable in config/sources.yaml
 
     def __init__(self, cfg: dict | None = None):
         super().__init__(cfg)
         self.queries = self.cfg.get("queries", DEFAULT_QUERIES)
+        self.max_detail_fetches = int(self.cfg.get("max_detail_fetches",
+                                                   self.max_detail_fetches))
 
     # -- fetch -----------------------------------------------------------------
 

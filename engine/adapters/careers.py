@@ -23,7 +23,7 @@ FUNCTIONS = {
 class CareersAdapter(BaseAdapter):
     name = "careers_pages"
     interval_minutes = 1440
-    max_companies = 10   # per run
+    max_companies = 60   # per run
 
     def probe(self) -> dict:
         """The real code path, against exactly one company. Probing the full

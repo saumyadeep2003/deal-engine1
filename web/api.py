@@ -265,7 +265,13 @@ def pipeline(status: str = Query("all"), sector: str = Query("all"),
 def sectors() -> dict:
     from engine.events import talent_flow_summary
     rows = []
-    for s in db.q("SELECT * FROM sectors_emerging ORDER BY ratio DESC"):
+    # Ordered by ratio, then by raw technical velocity. A cluster whose consensus
+    # could not be measured carries ratio 0 on purpose, so it appears BELOW every
+    # cluster with a real signal-vs-coverage lead rather than at the top of the
+    # board on volume alone.
+    for s in db.q("""SELECT * FROM sectors_emerging
+                     ORDER BY ratio DESC, signal_velocity DESC, detected_at DESC
+                     LIMIT 40"""):
         ev = json.loads(s["evidence_json"] or "[]")
         rows.append({"label": s["label"], "ratio": s["ratio"],
                      "signal_velocity": s["signal_velocity"],

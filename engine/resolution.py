@@ -165,7 +165,7 @@ def resolve(signal: Signal, signal_id: int | None = None) -> int | None:
     # create new company
     company_id = db.insert("companies", {
         "domain": domain, "name": name or domain or "(unnamed)",
-        "description": payload.get("summary") or payload.get("description"),
+        "description": _plausible_description(payload),
         "country": "US" if payload.get("state") else payload.get("country"),
         "hq": payload.get("location"),
         "founded_year": payload.get("year_of_incorporation"),
@@ -177,6 +177,26 @@ def resolve(signal: Signal, signal_id: int | None = None) -> int | None:
     if domain:
         _add_alias(company_id, domain, "domain", 1.0, signal_id)
     return company_id
+
+
+LISTICLE_DESC_RE = __import__("re").compile(
+    r"^\s*\d+\s+\w|\bstartups? that\b|\btop \d+\b|\bbest \w+ (startups|companies)\b"
+    r"|\braised \$|\bround-?up\b", __import__("re").I)
+
+
+def _plausible_description(payload: dict) -> str | None:
+    """A description must be about THIS company.
+
+    The field used to take whatever `summary` rode in with the creating signal.
+    For a company first seen inside a funding round-up that is the round-up's own
+    summary, which is how leadmagic.io came to be described in a partner-facing
+    column as "19 Series A Cybersecurity Startups That Raised $626M". A listicle
+    summary is rejected here; engine/profile.py fills the column properly from the
+    company's own website."""
+    text = (payload.get("summary") or payload.get("description") or "").strip()
+    if not text or LISTICLE_DESC_RE.search(text[:120]):
+        return None
+    return text[:400]
 
 
 def merge_companies(keep_id: int, absorb_id: int, confidence: float,

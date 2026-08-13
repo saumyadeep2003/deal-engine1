@@ -200,6 +200,22 @@ def main() -> int:
           c == 200 and len(stages) >= 8 and sane,
           f"{len(stages)} stages; {cov.get('headline', '')[:80] if isinstance(cov, dict) else ''}")
 
+    # D18 — the assignment's investment criteria are answered per company, and a
+    # criterion with no evidence says so rather than scoring zero. Zero reads as a
+    # judgement; absence reads as a gap, and a partner must be able to tell them apart.
+    from engine import estimates as _est
+    _row = db.q1("""SELECT id FROM companies WHERE is_synthetic=0
+                    AND status IN ('pipeline','hot','watchlist') LIMIT 1""")
+    if _row:
+        card = _est.criteria_scorecard(_row["id"])
+        labelled = all(r.get("method") for r in card)
+        no_fake_zero = all(not (str(r["value"]).strip() == "0") for r in card)
+        check("D18 every fund criterion is answered with its method, gaps named not zeroed",
+              len(card) >= 8 and labelled and no_fake_zero,
+              f"{len(card)} criteria, all carry a method")
+    else:
+        check("D18 (no companies to score)", True, "")
+
     # D12 — scheduler live in-process, honouring the search mode:
     # auto = the full job set; manual = housekeeping only, searches via button.
     log = ROOT / "logs" / "engine.out.log"

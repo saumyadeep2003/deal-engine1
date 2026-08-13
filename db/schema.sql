@@ -176,7 +176,8 @@ CREATE TABLE IF NOT EXISTS sectors_emerging (
   is_contrarian INTEGER NOT NULL DEFAULT 0,
   companies_json TEXT,           -- best companies sourced INSIDE this cluster (§2b)
   talent_flow INTEGER NOT NULL DEFAULT 0,  -- founder-move / frontier-lab docs in cluster
-  terms_json TEXT                -- the cluster's defining terms, for auditability
+  terms_json TEXT,               -- the cluster's defining terms, for auditability
+  fingerprint TEXT               -- cluster identity across runs; one row per cluster
 );
 
 CREATE TABLE IF NOT EXISTS news_items (
@@ -344,3 +345,8 @@ CREATE TABLE IF NOT EXISTS gatekeeper_events (
   created_at TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_gatekeeper_company ON gatekeeper_events(company_id);
+
+-- NOTE: no index on sectors_emerging(fingerprint). schema.sql is executed in full
+-- before the column migration runs, so an index naming a migrated column fails on
+-- every pre-existing database. The table holds tens of rows now that clusters are
+-- deduplicated, so a scan costs nothing.

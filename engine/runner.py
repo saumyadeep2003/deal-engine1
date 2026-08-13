@@ -17,6 +17,8 @@ import time
 import traceback
 
 from . import db
+from . import people as people_mod
+from . import profile as profile_mod
 from .config import sources_config
 
 # Plain-English step labels — these are user-facing.
@@ -64,6 +66,8 @@ def build_steps(kind: str) -> list[tuple[str, str]]:
     steps += [
         ("events", "Spotting founder moves & customer wins"),
         ("filter", "Filtering to the fund's focus areas"),
+        ("people", "Reading founder & officer names out of SEC filings"),
+        ("profiles", "Reading each company's own website for what they do"),
         ("enrich", "Gathering extra company details"),
         ("judge", "AI assessment of the top companies"),
         ("score", "Ranking everyone against similar companies"),
@@ -226,6 +230,16 @@ def _execute(run_id: int, kind: str) -> None:
             events.derive_events(verbose=False)), items=None))
         run_step("filter", lambda st: st.progress(
             f"{filters.run_filter(verbose=False)['companies_kept']} companies match"))
+        # Founder names have been sitting inside filings, unread, since day one.
+        # Syncing them BEFORE judging is the whole point: the judge builds its
+        # evidence from the founders table, so doing this afterwards would leave
+        # founder quality assessed on nothing for another whole run.
+        run_step("people", lambda st: st.progress(
+            f"{people_mod.sync_from_filings(verbose=False)} founder/officer record(s)"
+            " from filings"))
+        run_step("profiles", lambda st: st.progress(
+            f"{profile_mod.backfill(verbose=False)} company profile(s) written from"
+            " their own websites"))
         run_step("enrich", lambda st: st.progress(
             f"{enrichment.run_enrichment(verbose=False)} companies enriched"))
 

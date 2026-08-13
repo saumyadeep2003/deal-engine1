@@ -37,7 +37,10 @@ class WebsiteAdapter(BaseAdapter):
     scraping before the deterministic filter is the expensive inversion)."""
     name = "company_website"
     interval_minutes = 1440
-    max_companies = 10
+    # 10 was why "what they do" was blank for 94% of the pipeline. This is the
+    # source of the description column the assignment asks for, and it is a plain
+    # HTTP GET of a public homepage — the only cost of raising it is wall-clock.
+    max_companies = 80
 
     def probe(self) -> dict:
         """The real code path, against exactly one company. Probing the full

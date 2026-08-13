@@ -238,7 +238,7 @@ alerts:
   rate_limit_per_company_hours: 24
 
 digest:
-  days: [mon, wed, fri]
+  days: [mon, tue, wed, thu, fri, sat, sun]
   hour_local: 7
   caps:
     deals: 5

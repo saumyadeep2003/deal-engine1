@@ -35,6 +35,30 @@ future global passes project work show tell ask""".split())
 TECH_SOURCES = {"arxiv", "github_trending", "hn"}
 CONSENSUS_SOURCES = {"rss_news"}
 
+# A sector is a market, not a vendor. TF-IDF cannot tell the difference: it found
+# that many documents mention Cloudflare and duly produced a cluster labelled
+# "Cloudflare AI Platform Software", which is a topic, not something a fund can
+# invest in. Big-company and product names are therefore barred from labels — they
+# may still hold a cluster together, they just cannot name it.
+VENDOR_NAMES = set("""
+openai anthropic google microsoft amazon aws azure meta nvidia apple ibm oracle
+salesforce cloudflare databricks snowflake stripe shopify uber airbnb tesla spacex
+github gitlab docker kubernetes hugging huggingface langchain llama gpt claude gemini
+mistral cohere perplexity figma notion slack zoom atlassian datadog mongodb redis
+postgres postgresql elastic confluent twilio okta crowdstrike palantir intel amd arm
+qualcomm broadcom samsung sony netflix spotify tiktok bytedance alibaba tencent baidu
+anaconda klaviyo airtable observability cognition
+""".split())
+
+# Words that describe an EVENT rather than a market. "acquires" recurring across
+# M&A headlines produced a cluster called "Company Acquisition Deals" — real
+# clustering, useless as a sector.
+EVENT_WORDS = set("""
+acquires acquired acquisition acquisitions merger merges ipo layoffs layoff hires
+hiring raises raised funding round rounds valuation shutdown shuts closes closed
+launches launched announces announced partnership partners appoints names
+""".split())
+
 
 def _tokens(text: str) -> list[str]:
     words = re.findall(r"[a-zA-Z][a-zA-Z0-9-]{2,}", text.lower())
@@ -134,6 +158,8 @@ def _label(docs: list[dict], members: list[int], mat: np.ndarray, vocab: list[st
         # appear only inside filings, so require at least one editorial mention.
         if len(term) <= 3 or any(ch.isdigit() for ch in term):
             return False
+        if term in VENDOR_NAMES or term in EVENT_WORDS:
+            return False          # a vendor is not a market; an event is not a sector
         if counts[term] < max(2, len(members) // 4):
             return False
         return editorial[term] > 0
@@ -151,9 +177,28 @@ def _label(docs: list[dict], members: list[int], mat: np.ndarray, vocab: list[st
                             f"keywords: {top}\ntitles: "
                             + "; ".join(docs[m]["text"][:80] for m in members[:6]),
                             tier="classify").strip()
+        name = _clean_label(name)
         if name and not name.startswith("[STUB"):
             return name[:60]
     return " / ".join(top)
+
+
+def _clean_label(name: str) -> str:
+    """Models hand back quoted, trailing-punctuation strings. `"Company Acquisition
+    Deals"` was stored, quotes and all, and rendered that way on the dashboard."""
+    name = (name or "").strip().strip('"\'').strip()
+    name = re.sub(r"^(the|a|an)\s+", "", name, flags=re.I).strip(" .:-")
+    return name
+
+
+def _fingerprint(terms: list[str]) -> str:
+    """Identity of a cluster across runs: its defining terms, order-independent.
+
+    Without this, every search inserted a fresh row for the same cluster — 526
+    rows accumulated, the dashboard showed the same trend two or three times under
+    slightly different model-written names, and "trends we are spotting" became a
+    log rather than a view."""
+    return "|".join(sorted(t.lower() for t in terms[:8]))
 
 
 def detect_sectors(verbose: bool = True) -> int:
@@ -202,21 +247,49 @@ def detect_sectors(verbose: bool = True) -> int:
         talent = sum(1 for m in members
                      if docs[m]["kind"] in ("founder_move", "hiring")
                      or docs[m].get("frontier_lab"))
+        # "Signal running ahead of consensus" is only meaningful if consensus was
+        # measured. With zero mainstream documents the ratio collapses to raw
+        # volume, and the top of the board fills with whatever was noisiest this
+        # week. Such a cluster is kept but reported as unmeasured, not ranked as
+        # an emerging sector.
+        consensus_measured = consensus > 0
         # the cluster's defining terms, kept for auditability and for sourcing
         centroid = mat[members].mean(axis=0)
         terms = [vocab[i] for i in np.argsort(-centroid)[:12] if len(vocab[i]) > 3]
         # §2(b) "…and then go find the best companies in them"
         found = source_inside_cluster(terms, members, docs)
-        db.insert("sectors_emerging", {
-            "label": label, "cluster_id": ci, "signal_velocity": velocity,
-            "consensus_volume": consensus, "ratio": round(ratio, 3),
-            "source_diversity": len(srcs), "evidence_json": json.dumps(evidence),
-            "thesis_md": ("Contrarian: heavy coverage with decelerating technical signal."
-                          if contrarian else
-                          "Emerging: technical signal running ahead of mainstream coverage."),
-            "detected_at": db.now_iso(), "is_contrarian": 1 if contrarian else 0,
-            "companies_json": json.dumps(found), "talent_flow": talent,
-            "terms_json": json.dumps(terms)})
+        thesis_md = ("Contrarian: heavy coverage with decelerating technical signal."
+                     if contrarian else
+                     "Emerging: technical signal running ahead of mainstream coverage."
+                     if consensus_measured else
+                     "Technical activity clustered here, but no mainstream coverage was "
+                     "found to compare it against — this is volume, not yet a lead "
+                     "indicator.")
+        row = {"label": label, "cluster_id": ci, "signal_velocity": velocity,
+               "consensus_volume": consensus,
+               # unmeasured consensus must not out-rank a real lead
+               "ratio": round(ratio, 3) if consensus_measured else 0.0,
+               "source_diversity": len(srcs), "evidence_json": json.dumps(evidence),
+               "thesis_md": thesis_md,
+               "detected_at": db.now_iso(), "is_contrarian": 1 if contrarian else 0,
+               "companies_json": json.dumps(found), "talent_flow": talent,
+               "terms_json": json.dumps(terms)}
+        # One row per cluster identity: update it in place so the table is the
+        # current picture rather than an append-only log of every run.
+        fp = _fingerprint(terms)
+        prior = db.q1("SELECT id FROM sectors_emerging WHERE fingerprint=?", (fp,))
+        if prior:
+            db.execute("""UPDATE sectors_emerging SET label=?, signal_velocity=?,
+                          consensus_volume=?, ratio=?, source_diversity=?, evidence_json=?,
+                          thesis_md=?, detected_at=?, is_contrarian=?, companies_json=?,
+                          talent_flow=?, terms_json=? WHERE id=?""",
+                       (row["label"], row["signal_velocity"], row["consensus_volume"],
+                        row["ratio"], row["source_diversity"], row["evidence_json"],
+                        row["thesis_md"], row["detected_at"], row["is_contrarian"],
+                        row["companies_json"], row["talent_flow"], row["terms_json"],
+                        prior["id"]))
+        else:
+            db.insert("sectors_emerging", {**row, "fingerprint": fp})
         n_saved += 1
     if verbose and n_saved == 0:
         print(f"  sector detection: {len(clusters)} raw cluster(s), none passed the"
@@ -228,6 +301,12 @@ def detect_sectors(verbose: bool = True) -> int:
             tag = " [CONTRARIAN]" if r["is_contrarian"] else ""
             print(f"  cluster: {r['label'][:50]:52s} signal/consensus={r['ratio']}{tag}")
     return n_saved
+
+
+# How many of a cluster's defining terms a company must share before it is
+# claimed as a member of that sector. Three is strict enough to stop coincidence
+# and loose enough to survive different wording.
+MIN_TERM_OVERLAP = 3
 
 
 def source_inside_cluster(terms: list[str], members: list[int],
@@ -262,7 +341,12 @@ def source_inside_cluster(terms: list[str], members: list[int],
             text += " " + s["payload_json"][:300]
         overlap = len(stem_terms & _stems(text))
         in_cluster = direct.get(c["id"], 0)
-        if not overlap and not in_cluster:
+        # A single shared stem is not membership. One term of overlap put a
+        # robotics company under a Cloudflare AI cluster, which is the kind of
+        # association that makes a partner distrust the whole panel. Direct
+        # membership (the company's own signal is IN the cluster) still counts on
+        # its own, because that is evidence rather than word overlap.
+        if not in_cluster and overlap < MIN_TERM_OVERLAP:
             continue
         scored.append({
             "company_id": c["id"], "company": c["name"],

@@ -114,6 +114,7 @@ MIGRATIONS: list[tuple[str, str, str]] = [
     ("sectors_emerging", "companies_json", "TEXT"),
     ("sectors_emerging", "talent_flow", "INTEGER NOT NULL DEFAULT 0"),
     ("sectors_emerging", "terms_json", "TEXT"),
+    ("sectors_emerging", "fingerprint", "TEXT"),
 ]
 
 

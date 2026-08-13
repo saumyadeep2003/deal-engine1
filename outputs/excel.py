@@ -20,7 +20,7 @@ from openpyxl.utils import get_column_letter
 
 import sys
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from engine import db, hiring as hiring_mod, scoring  # noqa: E402
+from engine import db, estimates as est_mod, hiring as hiring_mod, profile as profile_mod, scoring  # noqa: E402
 from engine.config import OUTPUT_DIR, thesis  # noqa: E402
 
 WORKBOOK = OUTPUT_DIR / "deal_pipeline.xlsx"
@@ -174,12 +174,15 @@ def _pipeline_row(c: dict) -> list:
     val = rnd["valuation_usd"] if rnd else None
     return [
         c["name"],
-        (c["description"] or "")[:160] or "—",
+        # the company's own words first; the signal-derived description is the
+        # fallback, and it is the field that once carried a listicle headline
+        (profile_mod.one_liner(cid) or (c["description"] or "")[:160]
+         or "— (website not read yet)"),
         c.get("sub_sector") or c.get("sector") or "unclassified",
         (rnd["stage"] if rnd and rnd["stage"] else c.get("stage")) or "unknown",
         _fmt_money(rnd["amount_usd"]) if rnd and rnd["amount_usd"] else "— (not disclosed in free sources)",
         (rnd["announced_at"] or "")[:10] if rnd else "—",
-        _fmt_money(val) if val else "— (requires PitchBook)",
+        (_fmt_money(val) if val else est_mod.cell(est_mod.valuation(cid))),
         (rnd["lead"] if rnd and rnd["lead"] else "— (not disclosed)"),
         tier1,
         gated(headcount, hiring_mod.summary_line(cid)),

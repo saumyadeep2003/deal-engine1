@@ -73,7 +73,12 @@ def main() -> None:
     add(job_commentary, "interval", minutes=240, id="07_commentary_harvester")
     add(job_peers, "interval", minutes=240, id="08_peer_set_tracker")
     add(job_excel, "interval", minutes=120, id="09_excel_writer")
-    add(job_digest, CronTrigger(day_of_week="mon,wed,fri", hour=hour), id="10_digest_assembly")
+    # The assignment specified Mon/Wed/Fri; the fund asked for a morning brief
+    # every day. `digest.days` in config/thesis.yaml is the switch — changing the
+    # cadence is a config edit, not a code change, which is the point of keeping
+    # the schedule out of Python.
+    days = ",".join(thesis()["digest"].get("days") or ["mon", "wed", "fri"])
+    add(job_digest, CronTrigger(day_of_week=days, hour=hour), id="10_digest_assembly")
     add(job_alerts, "interval", minutes=30, id="11_instant_alerts")
     add(job_sectors, "interval", minutes=720, id="12_sector_detection")
     add(job_health, "interval", minutes=60, id="13_error_handler+14_source_health")

@@ -552,3 +552,51 @@ Chronological log of judgment calls made while building. Part of the deliverable
     went 25 -> 60 companies and wayback 10 -> 25: both are free, key-free endpoints where the
     only cost is wall-clock, and the old caps were why hiring data existed for a handful of
     companies and "requires Coresignal" for everyone else.
+67. **Sector detection rebuilt after reading its own output.** 526 rows had accumulated because
+    every run inserted every cluster and nothing ever deduplicated: the same trend appeared
+    two or three times under slightly different model-written names. Clusters now carry a
+    fingerprint (their defining terms, order-independent) and are updated in place, so the
+    table is the current picture rather than an append-only log. Three quality fixes came out
+    of looking at what it had actually produced. The top cluster was "Cloudflare AI Platform
+    Software" — TF-IDF had found documents that mention a vendor, which is a topic and not a
+    market, so vendor and product names are now barred from labels (they may still hold a
+    cluster together, they just cannot name it). "Company Acquisition Deals" was an *event*
+    type recurring across M&A headlines, so event words are barred too. And a cluster with
+    zero mainstream documents was ranking top on a ratio that had collapsed to raw volume;
+    consensus must now be measured for a ratio to be reported at all, otherwise the row says
+    so and sorts below every real lead. Company-to-cluster matching went from one shared stem
+    to three — one term had put a robotics company under a Cloudflare AI heading, which is the
+    kind of association that makes a partner distrust the whole panel.
+68. **The description column was quoting the article that found the company.** `companies.
+    description` took whatever `summary` arrived with the creating signal, so a company first
+    seen inside a funding round-up was described by the round-up: leadmagic.io read *"19
+    Series A Cybersecurity Startups That Raised $626M · Escape · Qevlar AI…"* in a
+    partner-facing column. Listicle summaries are now rejected at creation, and
+    `engine/profile.py` rebuilds the field from the one source that can only be about this
+    company — its own website. The model writes two or three sentences and a product list
+    from the scraped text, then the gatekeeper checks every sentence back against that text
+    and drops product names the site never prints. No site read, no profile: a named absence
+    beats a paragraph assembled from press coverage, because a partner reading "what they do"
+    is entitled to assume it came from the company.
+69. **Founder coverage was 0% because of a cap set for a budget that does not exist.** Form D
+    detail XML is the only place a filing names its people — and `max_detail_fetches` was 15
+    per run, so 205 of 220 filings never had theirs read. The consequence was not cosmetic:
+    `judge._context()` builds its evidence from the `founders` table, so every company was
+    assessed for founder quality — the assignment's first criterion — with **zero founder
+    evidence in the prompt**. SEC asks for a descriptive User-Agent and under 10 requests a
+    second; it does not charge. The cap is now 150 and configurable, and `engine/people.py`
+    syncs related persons into `founders` before the judge runs, recording what the filing
+    actually said: a director is not promoted to founder because it would read better, and a
+    fund's officers are never written onto a startup's team.
+70. **Three of the nine investment criteria were permanently blank.** Valuation, growth and
+    runway all read "requires PitchBook" — true of the *measured* figures and useless as an
+    answer. `engine/estimates.py` computes each from what is observable, and every estimate
+    carries three things it must never be separated from: a range instead of a point, the
+    arithmetic that produced it, and the word estimate. Valuation is the round size over the
+    stage's ordinary dilution band. Growth is the change in open roles, labelled hiring
+    appetite and explicitly *not* the revenue growth the criterion asks for. Runway refuses
+    outright without team evidence, because dividing a real round size by an invented
+    headcount produces something indistinguishable from a real estimate. Two rendering bugs
+    surfaced immediately: the growth target printed as "≥ 0.4% YoY" (the config stores a
+    fraction) and the tier-1 target printed as "[3, 4]" — both in the row a partner reads to
+    decide whether a company clears the bar.

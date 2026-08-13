@@ -4,6 +4,10 @@
 
 sources:
   - name: edgar_formd
+    # Each detail fetch is one small XML from sec.gov. It is where the founders,
+    # the offering amount and the incorporation year live, so starving it starves
+    # the founder-quality criterion the fund scores on.
+    max_detail_fetches: 150
     adapter: engine.adapters.edgar_formd.EdgarFormDAdapter
     interval_minutes: 360
     requires_license: false

@@ -157,7 +157,7 @@ def prune_impossible_commentary(verbose: bool = False) -> int:
     return removed
 
 
-def run_commentary(max_companies: int = 12, verbose: bool = True) -> int:
+def run_commentary(max_companies: int = 60, verbose: bool = True) -> int:
     http = _Http()
     prune_impossible_commentary(verbose=verbose)
     rows = db.q("""SELECT c.id, c.name FROM companies c JOIN scores s ON s.company_id=c.id

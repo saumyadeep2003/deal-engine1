@@ -14,7 +14,7 @@ from __future__ import annotations
 import json
 import re
 
-from . import db, gatekeeper, hiring as hiring_mod, judge, llm
+from . import db, estimates, gatekeeper, hiring as hiring_mod, judge, llm, people, profile
 from .config import OUTPUT_DIR, models_config, thesis
 
 BRIEFS_DIR = OUTPUT_DIR / "briefs"
@@ -126,6 +126,24 @@ def _at_a_glance(company_id: int, c, score, rec: str) -> str:
     return "\n".join(out) + "\n"
 
 
+def _criteria_section(company_id: int) -> str:
+    """The assignment's own investment criteria, answered one by one.
+
+    A partner should not have to reconstruct "does this clear our bar" from prose
+    scattered through a page. Every row states what the engine can say and how it
+    got there; a criterion with no evidence says so rather than scoring zero,
+    because zero reads as a judgement and absence reads as a gap."""
+    rows = estimates.criteria_scorecard(company_id)
+    out = ["\n\n## Against the fund's criteria\n", "| Criterion | What we can say | How |",
+           "|---|---|---|"]
+    for r in rows:
+        method = (r.get("method") or "")[:150]
+        if r.get("caveat"):
+            method += f" — {r['caveat']}"
+        out.append(f"| {r['criterion']} | {str(r['value']).replace('|', '·')} [computed] | {method} |")
+    return "\n".join(out) + "\n"
+
+
 def _gaps_section(company_id: int) -> str:
     """What this brief cannot tell you, stated plainly. A partner who knows the
     shape of the hole reads the rest correctly; one who doesn't over-trusts it."""
@@ -181,10 +199,17 @@ def _observed_sections(company_id: int) -> str:
                                                         for i in invs) + " [computed]")
 
     out.append("\n## The team\n")
-    founders = db.q("SELECT * FROM founders WHERE company_id=?", (company_id,))
-    for f in founders:
-        out.append(f"- {f['name']}{' — prior exits: ' + str(f['prior_exits']) if f['prior_exits'] else ''}"
-                   f"{' — frontier-lab alum' if f['frontier_lab_alum'] else ''}")
+    for m in people.team(company_id):
+        line = f"- **{m['name']}**"
+        if m.get("role"):
+            line += f" — {m['role']}"
+        if m.get("prior_exits"):
+            line += f" — prior exits: {m['prior_exits']}"
+        if m.get("frontier_lab_alum"):
+            line += " — frontier-lab alum"
+        if m.get("notes"):
+            line += f"\n  <br><small>{m['notes'][:220]}</small>"
+        out.append(line)
     persons = db.q("SELECT payload_json, id FROM signals WHERE company_id=? AND kind='filing'",
                    (company_id,))
     for s in persons:
@@ -447,7 +472,11 @@ def generate_brief(company_id: int, trigger: str = "on_demand",
     md = (f"# {c['name']}\n\n"
           + _headline(c, score, rec, trigger)
           + _at_a_glance(company_id, c, score, rec)
+          # what the company does comes BEFORE what we think of it: a partner
+          # cannot weigh a judgement about a business they have not been told about
+          + profile.section(company_id)
           + _observed_sections(company_id)
+          + _criteria_section(company_id)
           + _judgment_sections(company_id, judged, removals)
           + _gaps_section(company_id)
           + "\n\n## Similar companies we're tracking\n"
