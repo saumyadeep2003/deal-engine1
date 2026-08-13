@@ -8,13 +8,8 @@ filtered deterministically before any model call.
 from __future__ import annotations
 import json
 import re
-from datetime import datetime, timedelta
 from typing import Optional
 from urllib.parse import quote
-
-# How far before a company's first observed signal a comment can still plausibly
-# be about it (stealth-mode chatter, a founder's earlier announcement).
-COMMENT_GRACE_DAYS = 540
 
 from pydantic import BaseModel
 
@@ -56,28 +51,12 @@ def search_name(name: str) -> str | None:
     return base
 
 
-def _earliest_plausible_comment(company_id: int) -> str | None:
-    """A company first seen in 2026 cannot have been discussed in 2015. Without this
-    guard, a common-word name ('Pangram', 'Warp', 'Convex') collects years of unrelated
-    chatter — Pangram's brief carried three 2015 comments about the word game.
-    The grace window allows genuine pre-launch/stealth discussion."""
-    row = db.q1("SELECT MIN(observed_at) m FROM signals WHERE company_id=?", (company_id,))
-    if not row or not row["m"]:
-        return None
-    try:
-        first = datetime.fromisoformat(str(row["m"]).replace("Z", "+00:00"))
-    except ValueError:
-        return None
-    return (first - timedelta(days=COMMENT_GRACE_DAYS)).isoformat()
-
-
 def harvest_company(company_id: int, http: _Http | None = None, verbose: bool = False) -> int:
     http = http or _Http()
     c = db.q1("SELECT name FROM companies WHERE id=?", (company_id,))
     base = search_name(c["name"]) if c else None
     if not base:
         return 0
-    floor_at = _earliest_plausible_comment(company_id)
     url = HN_COMMENTS.format(q=quote(base))
     try:
         body, mode = http.http_get(url, retries=1)
@@ -88,9 +67,6 @@ def harvest_company(company_id: int, http: _Http | None = None, verbose: bool = 
         text = _clean(hit.get("comment_text", ""))
         if len(text) < 40 or PROMO_RE.search(text):
             continue  # deterministic noise filter BEFORE any model call
-        created = str(hit.get("created_at") or "")
-        if floor_at and created and created < floor_at:
-            continue  # predates the company's existence — a name collision, not commentary
         curl = f"https://news.ycombinator.com/item?id={hit.get('objectID')}"
         if db.q1("SELECT id FROM commentary WHERE url=? AND company_id=?", (curl, company_id)):
             continue
@@ -133,33 +109,8 @@ def harvest_reddit_mentions(verbose: bool = True) -> int:
     return n
 
 
-def prune_impossible_commentary(verbose: bool = False) -> int:
-    """Remove stored quotes that predate their company's existence. Rows harvested
-    before the date guard existed must not keep appearing in briefs — a bad row is
-    only fixed by deleting it, not by filtering it at read time in one place and
-    forgetting the other."""
-    removed = 0
-    for c in db.q("SELECT id FROM companies WHERE is_synthetic=0"):
-        floor_at = _earliest_plausible_comment(c["id"])
-        if not floor_at:
-            continue
-        # count first: db.execute returns lastrowid on SQLite, which is meaningless
-        # for a DELETE and would under-report the clean-up as zero
-        doomed = db.q1("SELECT COUNT(*) n FROM commentary WHERE company_id=?"
-                       " AND observed_at < ?", (c["id"], floor_at))["n"]
-        if doomed:
-            db.execute("DELETE FROM commentary WHERE company_id=? AND observed_at < ?",
-                       (c["id"], floor_at))
-            removed += doomed
-    if verbose and removed:
-        print(f"  commentary: pruned {removed} quote(s) predating their company"
-              " (name collisions, not commentary)")
-    return removed
-
-
 def run_commentary(max_companies: int = 12, verbose: bool = True) -> int:
     http = _Http()
-    prune_impossible_commentary(verbose=verbose)
     rows = db.q("""SELECT c.id, c.name FROM companies c JOIN scores s ON s.company_id=c.id
                    WHERE s.id=(SELECT id FROM scores WHERE company_id=c.id
                                ORDER BY scored_at DESC, id DESC LIMIT 1)

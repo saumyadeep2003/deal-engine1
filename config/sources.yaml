@@ -70,32 +70,6 @@ sources:
     notes: "Brief §5 'Company surface area' — product positioning, customer logos
       (from author-written alt text), pricing page + plan names. Post-filter only."
 
-  # ---- Apify: public-web Actors. Not a licence, just an API token. ----------
-  # Fills part of the gap the enterprise vendors own (traction, self-reported
-  # team size, coverage beyond SEC filings) for ~$40/mo instead of ~$40k/yr.
-  # Actor ids and queries are DATA: swap an Actor without touching Python.
-  # Deliberately excluded: LinkedIn and X Actors. Both platforms prohibit
-  # scraping in their terms; licensed routes for that data are wired in
-  # licensed.py (Coresignal, X API). A tool handed to a fund should not carry
-  # that liability to save a subscription.
-  - name: apify
-    adapter: engine.adapters.apify.ApifyAdapter
-    interval_minutes: 720
-    requires_license: false
-    env_key: APIFY_TOKEN
-    notes: "Apify Actors — funding discovery via search + company self-description crawl."
-    discovery:
-      actor: "apify~google-search-scraper"
-      max_results: 20
-      # Each query is one paid Actor run of 30-60s. 4 keeps a search under ~4 min
-      # and a free Apify plan alive; raise it once you are on a paid plan.
-      max_queries: 4
-      queries:
-        - "{theme} startup raises funding round"
-    enrichment:
-      actor: "apify~website-content-crawler"
-      max_pages: 3
-
   # ---- Licensed sources: identical interface, wired end-to-end, return LicenseRequired ----
   - name: pitchbook
     adapter: engine.adapters.licensed.PitchBookAdapter

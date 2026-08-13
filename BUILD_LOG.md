@@ -269,35 +269,3 @@ Chronological log of judgment calls made while building. Part of the deliverable
     dead dashboard. Verified against real Postgres: 12 identical parameterised queries, a
     forced mid-flight connection close, and a full tracked pipeline run (43 companies,
     7 top picks) with zero tracebacks.
-44. **Auditing one brief found four defects, three of them accuracy bugs.** (a) The brief
-    claimed "100th percentile of 5 in cohort unclassified|series-b" and, four lines later,
-    "No cohort assigned yet" — `_comparables()` bailed on a null sector while `score_all()`
-    buckets those companies into an 'unclassified' cohort. Peers now come from the same
-    cohort the percentile was computed in, labelled as the catch-all it is. (b) "Product
-    traction" listed the funding announcement as traction, because the section ended with a
-    dump of all recent signals; funding events are excluded there (they are already under
-    Funding history) and the remainder is labelled "Other recent signals (mentions, not
-    traction)". (c) A rank drawn from a cohort of five was presented as a Deep Dive with no
-    caveat at the recommendation; low-confidence cohorts now carry an explicit "treat as a
-    prompt to look, not evidence of relative quality" note. (d) Regenerating exposed the
-    worst one: Pangram's commentary carried eight Hacker News comments from 2014-2015 about
-    *pangrams the word game*. A company first observed in 2026 cannot have been discussed in
-    2015, so commentary older than (first signal − 540 days) is now rejected at harvest and
-    pruned from storage on every run — 32 false quotes removed from the existing corpus, the
-    two genuine Pangram comments kept. This is the name-collision risk noted in item 12,
-    caught in the act by reading real output.
-45. **The easy test answered the wrong question.** `/api/llm/test` sent "reply OK" and came
-    back in 0.8s, which looked like proof the model worked — while every real judgment was
-    timing out. A trivial prompt on a reasoning model is nothing like a judging prompt. The
-    diagnostic now supports `hard=true` (a judging-sized prompt, the only test that reflects
-    the pipeline) and `model=` (probe any model without editing config and redeploying,
-    turning a 4-minute deploy-and-hope loop into a 3-second question).
-46. **Model routing is now measured, not assumed.** Probed live against the provider with a
-    judging-sized prompt: `llama-3.1-8b-instruct` 3.1s (works), `inkling` 43.2s (works on the
-    probe, but real company contexts are larger and were exceeding 75s), `llama-3.1-70b` and
-    `llama-3.3-70b` both TIMED OUT at 75s — the free tier cannot serve the big models in
-    time. Routing moved to 8b for every stage: real, cited, slightly simpler analysis beats
-    both a [STUB] and a 13-minute search. The measurements are recorded in models.yaml so the
-    next person sees why, and `fallback_model` retries once when the routed model fails for
-    any reason (retired, mistyped, or busy) before stubbing. The one-line upgrade path back
-    to a larger model is a config edit the day a faster endpoint is available.

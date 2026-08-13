@@ -9,7 +9,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from engine import db, llm, scoring  # noqa: E402
-from engine.config import OUTPUT_DIR, PUBLIC_BASE_URL, thesis  # noqa: E402
+from engine.config import OUTPUT_DIR, thesis  # noqa: E402
 from engine.filters import match_theme  # noqa: E402
 
 DIGEST_DIR = OUTPUT_DIR / "digests"
@@ -110,10 +110,9 @@ def build_digest(verbose: bool = True) -> Path:
                 rationale += judged["thesis_narrative"][:300]
         else:
             rationale += llm.STUB_TEXT
-        # absolute, or the link is dead the moment the digest leaves the server
-        link = f"{PUBLIC_BASE_URL}/api/brief/{c['id']}"
+        slug_link = f"../briefs/{c['name'].lower().replace(' ', '-')[:60]}.md"
         return (f"<div class='deal'><b>{c['name']}</b> — {c['sub_sector'] or c['sector'] or ''}"
-                f" <a href='{link}'>read the full brief</a><p>{rationale}</p></div>")
+                f" <a href='{slug_link}'>full brief</a><p>{rationale}</p></div>")
 
     def sector_html(s):
         return (f"<div><b>{s['label']}</b> — signal/consensus {s['ratio']}"
@@ -138,8 +137,8 @@ def build_digest(verbose: bool = True) -> Path:
     .deal{{margin:0.8rem 0;padding:0.6rem;background:#f6f8fa;border-left:3px solid #1F3B57}}
     .empty{{color:#888;font-style:italic}} small{{color:#666}}
     </style></head><body>
-    <h1>Thirdbase deal digest — {db.to_display(db.now_iso(), fmt='%d %b %Y', with_label=False)}</h1>
-    <p><small>Window: since {db.to_display(since, fmt='%d %b %Y', with_label=False)}. Every figure traces to a stored signal;
+    <h1>Thirdbase deal digest — {db.now_iso()[:10]}</h1>
+    <p><small>Window: since {since[:10]}. Every figure traces to a stored signal;
     licence-gated fields are marked, judgment fields are stubbed without an API key.</small></p>
     {section(f"Top new deals (cap {caps['deals']})", deals, deal_html)}
     {section(f"Sector calls (cap {caps['sector_calls']})", sector_calls, sector_html)}

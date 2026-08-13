@@ -10,26 +10,15 @@ provider:
 # cheaper small model you trust, point `classify` at it and the funnel economics
 # improve without touching code. (Former z.ai config: base_url
 # https://api.z.ai/api/openai/v1, key ZAI_API_KEY, tiers glm-4-flash/air/plus.)
-# Routing is MEASURED, not assumed. Probed live against this provider with a real
-# judging-sized prompt (POST /api/llm/test?hard=true&model=...):
-#   meta/llama-3.1-8b-instruct    3.1s   works
-#   thinkingmachines/inkling     43.2s   works, but marginal — real company contexts
-#                                        are larger than the probe and exceeded 75s
-#   meta/llama-3.1-70b-instruct  75s+    TIMED OUT — unusable on this tier
-#   meta/llama-3.3-70b-instruct  75s+    TIMED OUT — unusable on this tier
-# So the free tier cannot serve the big models in time, and a 43s-per-company judging
-# pass is what made searches take 13 minutes. 8b is the model that actually answers.
-# Real, cited, slightly simpler analysis beats a [STUB] every time — and beats a
-# timeout. Swap any line to change routing; no code contains a model name.
+# `classify` and `chat` are quick, high-volume, low-judgment calls: a reasoning
+# model spends 15-30s thinking about a question a small instruct model answers in
+# about a second. `score` and `brief` are where the reasoning is worth paying for.
+# Swap any line to change model routing — no code touches a model name.
 tiers:
   classify: "meta/llama-3.1-8b-instruct"
-  score: "meta/llama-3.1-8b-instruct"
-  brief: "meta/llama-3.1-8b-instruct"
+  score: "thinkingmachines/inkling"
+  brief: "thinkingmachines/inkling"
   chat: "meta/llama-3.1-8b-instruct"
-
-# Last resort when the routed model fails for any reason (timeout, outage, a model
-# retired by the provider). Retried ONCE before falling back to a loud [STUB].
-fallback_model: "meta/llama-3.1-8b-instruct"
 
 generation:
   temperature: 1.0

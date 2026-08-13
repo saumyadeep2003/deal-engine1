@@ -146,12 +146,6 @@ def _log(stage: str, model: str, pt: int, ct: int, stub: bool) -> None:
 def complete(stage: str, system: str, user: str, tier: str | None = None) -> str:
     """Plain-text completion. Returns STUB_TEXT when no key is configured."""
     model = models_config()["tiers"][tier or stage if (tier or stage) in models_config()["tiers"] else "score"]
-    return _raw_complete(model, stage, system, user)
-
-
-def _raw_complete(model: str, stage: str, system: str, user: str) -> str:
-    """The call itself, with an explicit model — so a diagnostic can probe any model
-    without editing config and redeploying."""
     if stubbed():
         _log(stage, model, 0, 0, stub=True)
         return STUB_TEXT
@@ -165,7 +159,6 @@ def _raw_complete(model: str, stage: str, system: str, user: str) -> str:
            or gen.get("max_tokens", 8192))
     _pace()
     resp = None
-    _tried_fallback = False
     for attempt in range(4):
         try:
             resp = _get_client().chat.completions.create(
@@ -178,15 +171,14 @@ def _raw_complete(model: str, stage: str, system: str, user: str) -> str:
             break
         except Exception as exc:  # noqa: BLE001 — provider outage must not kill a job
             msg = str(exc)
-            # Any failure of the routed model — retired, mistyped, or simply too slow
-            # on this tier — degrades to the model we know answers, rather than
-            # stubbing. Measured: the 70B models time out here while 8b returns in ~3s,
-            # so "the big model is busy" must not cost the partner their analysis.
-            fallback = models_config().get("fallback_model") or models_config()["tiers"].get("score")
-            if fallback and model != fallback and not _tried_fallback:
-                _tried_fallback = True
-                print(f"  ~ model '{model}' failed for stage={stage} ({type(exc).__name__})"
-                      f" — retrying once with '{fallback}'")
+            # A tier pointed at a model this provider doesn't serve should degrade to
+            # the model we know works, not stub the whole run. Config is editable by
+            # partners; a typo there must not look like an outage.
+            fallback = models_config()["tiers"].get("score")
+            if (("model" in msg.lower() and ("not found" in msg.lower() or "404" in msg))
+                    or "unknown model" in msg.lower()) and model != fallback and fallback:
+                print(f"  ~ model '{model}' unavailable for stage={stage} — falling back"
+                      f" to '{fallback}'")
                 model = fallback
                 continue
             rate_limited = "429" in msg or "rate" in msg.lower() or "quota" in msg.lower()
@@ -212,34 +204,17 @@ def _raw_complete(model: str, stage: str, system: str, user: str) -> str:
     return resp.choices[0].message.content or ""
 
 
-def self_test(model_override: str | None = None, hard: bool = False) -> dict:
-    """One real call, so 'why is everything stubbed?' is answerable from the dashboard
-    instead of the host's logs. Never raises.
-
-    `model_override` probes a specific model without a deploy — the difference between
-    "change config, push, wait 4 minutes, hope" and "try three models in 30 seconds".
-    `hard=True` sends a judging-sized prompt: a trivial "reply OK" passed in 0.8s while
-    every real judgment timed out, so the easy test was answering the wrong question."""
+def self_test() -> dict:
+    """One tiny real call, so 'why is everything stubbed?' is answerable from the
+    dashboard instead of the host's logs. Never raises."""
     key_env = api_key_env_name()
     if stubbed():
         return {"ok": False, "reason": f"{key_env} is not set in this environment",
                 "key_env": key_env, "key_present": False}
-    model = model_override or models_config()["tiers"]["score"]
+    model = models_config()["tiers"]["score"]
     circuit_reset()                      # a test should try, not inherit a tripped circuit
     t0 = _t.time()
-    if hard:
-        out = _raw_complete(model, "selftest",
-                            "You are a venture analyst. Judge the company below on founder "
-                            "quality, moat and TAM with explicit assumptions, then give a "
-                            "short thesis narrative. Cite signal ids [S:n].",
-                            "Company: Testco | sector: robotics | stage: seed\n"
-                            "[S:1] funding_event @ 2026-08-01 :: {\"title\": \"Testco raises "
-                            "$20M Series A led by a tier-1 fund for warehouse robots\"}\n"
-                            "[S:2] news @ 2026-08-02 :: {\"title\": \"Testco signs pilot with "
-                            "a national logistics operator\"}")
-    else:
-        out = _raw_complete(model, "selftest", "You are a connection test.",
-                            "Reply with the word OK.")
+    out = complete("selftest", "You are a connection test.", "Reply with the word OK.")
     took = round(_t.time() - t0, 1)
     if is_stub(out):
         err = last_error() or {}
