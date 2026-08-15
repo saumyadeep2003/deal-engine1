@@ -17,6 +17,7 @@ import time
 import traceback
 
 from . import db
+from . import domains as domains_mod
 from . import people as people_mod
 from . import profile as profile_mod
 from .config import sources_config
@@ -70,6 +71,7 @@ def build_steps(kind: str) -> list[tuple[str, str]]:
         ("events", "Spotting founder moves & customer wins"),
         ("filter", "Filtering to the fund's focus areas"),
         ("people", "Reading founder & officer names out of SEC filings"),
+        ("domains", "Finding official websites for companies that lack one"),
         ("profiles", "Reading each company's own website for what they do"),
         ("enrich", "Gathering extra company details"),
         ("judge", "AI assessment of the top companies"),
@@ -240,6 +242,9 @@ def _execute(run_id: int, kind: str) -> None:
         run_step("people", lambda st: st.progress(
             f"{people_mod.sync_from_filings(verbose=False)} founder/officer record(s)"
             " from filings"))
+        run_step("domains", lambda st: st.progress(
+            f"{domains_mod.backfill(verbose=False)} website(s) found and validated for"
+            " companies that had none"))
         run_step("profiles", lambda st: st.progress(
             f"{profile_mod.backfill(verbose=False)} company profile(s) written from"
             " their own websites"))

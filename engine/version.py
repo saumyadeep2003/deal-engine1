@@ -76,6 +76,7 @@ def features() -> dict:
         "company_news_watch": _has("engine.adapters.company_news", "CompanyNewsAdapter"),
         "companies_house": _has("engine.adapters.companies_house", "CompaniesHouseAdapter"),
         "apollo_enrich": _has("engine.adapters.apollo_enrich", "ApolloEnrichAdapter"),
+        "domain_resolver": _has("engine.domains", "backfill"),
     }
 
 

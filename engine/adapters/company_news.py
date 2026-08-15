@@ -73,13 +73,26 @@ class CompanyNewsAdapter(BaseAdapter):
     def fetch(self, since: datetime) -> list[Signal]:
         # Watch the companies a partner is most likely to act on: best-ranked
         # first, so the cap trims the tail rather than the head.
-        rows = db.q("""SELECT c.id, c.name FROM companies c
+        # Attention follows the fund's own calls. A company marked Pass stays in
+        # status 'pipeline', and the first version of this watch covered it —
+        # spending queries on companies the partner already rejected and putting
+        # their news back on the dashboard. Now: Deep Dive and Watch are watched
+        # every run; everything else (Pass, unrated, stale) gets at most a
+        # monthly heartbeat — enough to catch a genuine re-rating event like a
+        # tier-1 round, quiet otherwise.
+        rows = db.q("""SELECT c.id, c.name,
+                         COALESCE(s.human_override, s.recommendation) rec
+                       FROM companies c
                        LEFT JOIN scores s ON s.company_id=c.id AND s.id=(
                          SELECT id FROM scores WHERE company_id=c.id
                          ORDER BY scored_at DESC, id DESC LIMIT 1)
                        WHERE c.is_synthetic=0 AND c.status IN ('hot','watchlist','pipeline')
-                       ORDER BY CASE c.status WHEN 'hot' THEN 0 WHEN 'watchlist' THEN 1
-                                ELSE 2 END, COALESCE(s.percentile, -1) DESC
+                       AND (COALESCE(s.human_override, s.recommendation)
+                              IN ('Deep Dive','Watch')
+                            OR c.last_signal_at < datetime('now','-30 days'))
+                       ORDER BY CASE COALESCE(s.human_override, s.recommendation)
+                                WHEN 'Deep Dive' THEN 0 WHEN 'Watch' THEN 1 ELSE 2 END,
+                                COALESCE(s.percentile, -1) DESC
                        LIMIT ?""", (self.max_companies,))
         cutoff = since.replace(tzinfo=since.tzinfo or timezone.utc)
         signals: list[Signal] = []
