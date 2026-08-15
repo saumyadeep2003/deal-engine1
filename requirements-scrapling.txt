@@ -1,0 +1,15 @@
+# Optional HTML-fetch upgrade. NOT imported by web/api.py or required to run the
+# engine — engine/adapters/fetching.py guards the import and falls back to httpx
+# when this is absent. Install it to clear the 403s / JavaScript shells that make
+# company and careers pages come back empty:
+#
+#   pip install -r requirements-scrapling.txt          # Fetcher (no browser) — works on Render free tier
+#   scrapling install                                  # ONE-TIME: browser + camoufox, for SCRAPLING_MODE=stealth/dynamic (local only)
+#
+# Then set SCRAPLING_MODE:
+#   auto (default) — scrapling-http when installed, else httpx
+#   stealth        — browser fetcher (renders JS, solves Cloudflare); needs `scrapling install`
+#
+# The two HTML sources (company_website, careers_pages) request `fetch_engine: stealth`
+# in config/sources.yaml and downgrade gracefully when a browser is not present.
+scrapling>=0.2

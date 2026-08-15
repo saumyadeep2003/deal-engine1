@@ -31,8 +31,10 @@ Reddit (OAuth-ready), careers, websites, **company_news** Google-News watch,
 **companies_house**, ATS boards, Bluesky, Wayback, Apify, **apollo_enrich**,
 plus 10 licence-gated stubs) → entity resolution → deterministic filter →
 founders from filings (`people.py`) → **domain resolver** (`domains.py`,
-Clearbit autocomplete + homepage validation) → profiles (`profile.py`, site →
-4-5 line overview, gatekeeper-checked) → enrichment → AI judgement
+own launch/website signals then Clearbit autocomplete, homepage-validated) →
+profiles (`profile.py`, site → 4-5 line overview, gatekeeper-checked; HTML fetched
+via **pluggable engine** `adapters/fetching.py` — Scrapling when installed, httpx
+otherwise) → enrichment → AI judgement
 (`judge.py`, context-hash evidence fingerprint, JUDGE_TOP_N budget on companies
 lacking judgement, **Deep Dive candidates judged on strong_model first**,
 escalate-once-on-empty for everyone else, **a rejection needs two models to
@@ -71,7 +73,7 @@ config/sources.yaml. Digest: daily 07:00 IST (`thesis.yaml digest.days`).
 or D12 fails on a missing scheduler log), `tests/gatekeeper_test.py` 22,
 `tests/events_test.py`, `tests/phase1_test.py` 14, `tests/mcp_test.py` 13,
 `tests/judge_verification_test.py` 35, `tests/llm_robustness_test.py` 14,
-`tests/identity_test.py` 18. MCP server (`mcp_server.py`, stdio for Claude Desktop,
+`tests/identity_test.py` 18, `tests/fetching_test.py` 14. MCP server (`mcp_server.py`, stdio for Claude Desktop,
 13 tools) exists but user **dropped the hybrid plan — API-only**; keep
 `web/api.py` free of mcp imports, `requirements-mcp.txt` separate.
 
@@ -126,6 +128,21 @@ or D12 fails on a missing scheduler log), `tests/gatekeeper_test.py` 22,
    contexts?), founder coverage climbing past 75/347, top picks carrying
    descriptions, and `/api/coverage`'s "AI assessment written" rising now
    that tam.assumptions no longer kills judgements.
+
+## HTML fetch engine (Scrapling) — optional, free
+
+`engine/adapters/fetching.py` routes every `http_get` through a chosen transport.
+Default httpx; install `requirements-scrapling.txt` to add Scrapling's no-browser
+`Fetcher` (browser TLS fingerprints — clears the 403s/JS-shells on company & careers
+pages that caused empty briefs), and `scrapling install` + `SCRAPLING_MODE=stealth`
+for a real browser (JS render + Cloudflare, local/larger box — NOT the free tier).
+`SCRAPLING_MODE`: `auto` (default, respects each source's `fetch_engine`, APIs stay
+httpx), `off`, `http`, `stealth`, `dynamic`. Only `company_website` and
+`careers_pages` opt in (`fetch_engine: stealth`, downgrades gracefully). Licensed/
+ToS-protected sources are NEVER routed here — a fetcher is not a licence (BUILD_LOG
+78). Verify with `/api/version` `scrapling_installed` and the connection-test detail
+(shows the engine per source). To turn it on in Render: add `pip install -r
+requirements-scrapling.txt` to the build command; the browser modes won't fit free.
 
 ## Known open issues
 

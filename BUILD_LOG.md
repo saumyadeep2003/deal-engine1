@@ -792,3 +792,46 @@ Chronological log of judgment calls made while building. Part of the deliverable
     'Text' topping a cohort on velocity, Remarc's domain inside its own launch signal, a
     filing stored without its people. New version markers: `identity_guard`,
     `domains_from_signals`, `founder_backfill`.
+78. **Scrapling wired as a pluggable fetch engine — a transport upgrade for the two HTML
+    sources, and a line held on the ten that are off-limits.** The ask was to point a
+    GitHub scraper (D4Vinci/Scrapling, BSD-3) at "all the sources". Most of the 24 are
+    structured APIs and feeds — EDGAR, HN's Algolia, arXiv, GitHub, Reddit JSON, Google
+    News RSS, the RSS wire, Bluesky, Companies House, Apollo, ATS boards — where there is
+    no HTML to scrape and a scraper adds nothing. The two that ARE raw HTML,
+    `company_website` and `careers_pages`, are exactly where a plain-httpx User-Agent
+    gets a 403 or a JavaScript shell, and that empty response is the direct cause of a
+    rank-1 brief with no description. So the integration is one seam, `BaseAdapter.
+    http_get`, routed through a new `engine/adapters/fetching.py`.
+    Design. Scrapling's `Fetcher` sends real browser TLS/HTTP2 fingerprints WITHOUT a
+    browser (works on the free tier); `StealthyFetcher`/`DynamicFetcher` launch a browser
+    and render JS (need `scrapling install`, local only). `SCRAPLING_MODE` is the global
+    policy — `auto` (default) respects each source's own `fetch_engine` and leaves every
+    other source on httpx, `off` pins httpx, `http`/`stealth`/`dynamic` force one engine
+    on everything. The two HTML sources request `stealth` in sources.yaml and downgrade
+    on their own (stealth -> scrapling-http -> httpx) when no browser is present, so the
+    line is safe to leave set on Render. Four disciplines from the rest of the engine:
+    graceful degradation (no scrapling installed -> httpx, silently; the dep lives in
+    `requirements-scrapling.txt`, import-guarded, and web/api.py never sees it), honest
+    provenance (the engine that fetched is recorded on the adapter and stamped into every
+    snapshot, so a page a stealth browser cleared is never shown as an ordinary fetch),
+    unchanged (body, mode) contract (a scrapling 4xx/5xx is re-raised as a real
+    httpx.HTTPStatusError so the existing transient/permanent classification and the
+    snapshot cache keep working), and no new failure mode (scrapling raising mid-request
+    falls through to httpx).
+    The ToS line. Scrapling CAN defeat Cloudflare — capability is not permission. A better
+    fetcher does not make PitchBook, Crunchbase, X, Coresignal, LinkedIn or Blind fair
+    game: their terms prohibit automated collection regardless, so they stay key-gated
+    stubs and are never given a `fetch_engine`. A test asserts no licensed source has one,
+    and that exactly the two intended HTML sources do — the same discipline that already
+    refused Apify LinkedIn/X scraping (known issues).
+    One thing the integration itself taught: the first cut let `auto` route EVERY source
+    through scrapling, which stacked scrapling's own 3-retry curl loop on top of the 12
+    API sources that httpx already fetches perfectly — the demo went from 113s to a
+    timeout. Fixed by making `auto` opt-in per source; APIs are untouched. Verified in the
+    cloud box that scrapling imports and executes its full curl_cffi fingerprint stack and
+    reaches the network (only the sandbox's CONNECT-tunnel proxy 403s outbound, which is
+    the documented BUILD_LOG-1 proxy and absent on Render). `tests/fetching_test.py` (14
+    checks) covers routing, per-source opt-in, global override, browser-absent downgrade,
+    the scrapling-exception and status-error paths, provenance stamping, and the ToS
+    guard. Version markers: `pluggable_fetch_engine` (code present) and
+    `scrapling_installed` (the runtime answer to "is the upgraded fetcher actually live?").

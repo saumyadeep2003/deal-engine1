@@ -86,6 +86,13 @@ def features() -> dict:
         "identity_guard": _has("engine.filters", "identity_corroborated"),
         "domains_from_signals": _has("engine.domains", "from_signals"),
         "founder_backfill": _has("engine.people", "backfill_related_persons"),
+        "pluggable_fetch_engine": _has("engine.adapters.fetching", "raw_fetch"),
+        # true only when scrapling is actually installed in THIS build — the code
+        # path exists regardless (marker above), but a partner asking "is the
+        # upgraded fetcher live?" wants the runtime answer, not the code's presence.
+        "scrapling_installed": (_has("engine.adapters.fetching", "scrapling_available")
+                                and __import__("engine.adapters.fetching",
+                                    fromlist=["_"]).scrapling_available()),
     }
 
 

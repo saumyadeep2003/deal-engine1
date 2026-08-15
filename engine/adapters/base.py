@@ -17,6 +17,7 @@ from typing import Protocol, runtime_checkable
 
 import httpx
 
+from . import fetching
 from .. import db
 from ..config import CACHE_DIR, USER_AGENT
 from ..models import HealthStatus, Signal
@@ -55,6 +56,14 @@ class BaseAdapter:
         self.interval_minutes = int(self.cfg.get("interval_minutes", self.interval_minutes))
         self._last_error: str | None = None
         self._last_fetch_mode = "live"
+        # Which transport made the last live fetch (httpx / scrapling-http /
+        # scrapling-stealth / scrapling-dynamic). Recorded so a page a stealth
+        # browser cleared is never presented as an ordinary fetch. An adapter can
+        # request a specific engine for its HTML — e.g. a JS-heavy company site —
+        # via `fetch_engine:` in config/sources.yaml; unavailable engines
+        # downgrade rather than fail (see engine/adapters/fetching.py).
+        self._last_fetch_engine = "httpx"
+        self._fetch_engine = self.cfg.get("fetch_engine")
 
     # ---- HTTP with live-first / snapshot-fallback ----------------------------
 
@@ -89,28 +98,45 @@ class BaseAdapter:
                 return snap
         return None
 
-    def http_get(self, url: str, retries: int = 2, headers: dict | None = None) -> tuple[str, str]:
+    def http_get(self, url: str, retries: int = 2, headers: dict | None = None,
+                 engine: str | None = None) -> tuple[str, str]:
         """Return (body, mode). mode: 'live' or 'cached_snapshot'.
 
         Live fetch first (with backoff on transient errors). If the network is
         unreachable, fall back to a snapshot of a real earlier fetch of the SAME
         url. If neither works, raise — a silent empty success is the failure
         mode this system is built to avoid.
+
+        The transport is chosen by `engine` (or the adapter's `fetch_engine`
+        config, or the global SCRAPLING_MODE) in engine/adapters/fetching.py: an
+        upgraded fetcher clears the 403s and JS shells that made company and
+        careers pages come back empty. The (body, mode) contract is unchanged, so
+        every caller and the snapshot cache keep working; which engine actually
+        fetched is recorded on self._last_fetch_engine for provenance.
         """
         hdrs = {"User-Agent": USER_AGENT, **(headers or {})}
+        want_engine = engine or self._fetch_engine
         last_exc: Exception | None = None
         for attempt in range(retries + 1):
             try:
-                r = httpx.get(url, headers=hdrs, timeout=20, follow_redirects=True)
-                r.raise_for_status()
-                body = r.text
+                body, status, link, used = fetching.raw_fetch(
+                    url, hdrs, timeout=20, follow_redirects=True, engine=want_engine)
+                if status >= 400:
+                    # rebuild a real httpx error so classify_error still decides
+                    # transient (429/5xx -> retry) vs permanent (403/404 -> stop)
+                    req = httpx.Request("GET", url)
+                    raise httpx.HTTPStatusError(
+                        f"{status} for {url}", request=req,
+                        response=httpx.Response(status, request=req))
                 # some APIs carry the useful count in a header (GitHub's Link
                 # rel="last" is how contributor totals are obtained)
-                self._last_link_header = r.headers.get("link", "")
+                self._last_link_header = link
                 # store snapshot so offline runs stay honest and reproducible
                 self._cache_path(url).write_text(json.dumps(
-                    {"url": url, "fetched_at": db.now_iso(), "body": body}))
+                    {"url": url, "fetched_at": db.now_iso(), "body": body,
+                     "engine": used}))
                 self._last_fetch_mode = "live"
+                self._last_fetch_engine = used
                 return body, "live"
             except Exception as exc:  # noqa: BLE001
                 last_exc = exc
@@ -121,6 +147,7 @@ class BaseAdapter:
         snap = self._snapshot_fallback(url)
         if snap:
             self._last_fetch_mode = "cached_snapshot"
+            self._last_fetch_engine = snap.get("engine", "httpx")
             return snap["body"], "cached_snapshot"
         raise last_exc  # type: ignore[misc]
 
@@ -168,10 +195,13 @@ class BaseAdapter:
         t = time.time()
         signals = self.fetch(self.probe_since())
         mode = self._last_fetch_mode
+        via = (f" via {self._last_fetch_engine}"
+               if self._last_fetch_engine and self._last_fetch_engine != "httpx" else "")
         return {"ok": True, "seconds": round(time.time() - t, 1), "fetch_mode": mode,
+                "fetch_engine": self._last_fetch_engine,
                 "detail": f"{len(signals)} item(s) returned"
                           + (" from the offline snapshot cache, not live"
-                             if mode == "cached_snapshot" else " live")}
+                             if mode == "cached_snapshot" else " live") + via}
 
     @staticmethod
     def probe_since() -> datetime:

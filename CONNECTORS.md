@@ -56,6 +56,36 @@ SEC EDGAR Form D filings, RSS news (TechCrunch, Bloomberg, FT, Reuters and other
 News, arXiv, GitHub, Reddit, company careers pages and company websites. Eight sources,
 no keys, no cost — and they are where every number in the current dashboard comes from.
 
+## The HTML fetch upgrade (Scrapling) — free, optional, not a licence
+
+Company websites and careers pages are the two sources a partner actually reads a
+company *out of*, and they are the two the engine fetches as raw HTML rather than
+through an API. A plain-httpx request there often gets a `403` or a JavaScript
+shell, and that empty response is the direct cause of a top-ranked brief with no
+description. [Scrapling](https://github.com/D4Vinci/Scrapling) fixes exactly that:
+
+- `pip install -r requirements-scrapling.txt` adds its `Fetcher`, which sends real
+  browser TLS/HTTP2 fingerprints **without a browser** — enough to clear
+  fingerprint-based blocks, and light enough for the Render free tier. Nothing else
+  changes: the engine already runs without it (httpx is the automatic fallback).
+- `scrapling install` then adds a real browser (camoufox/chromium) for
+  `SCRAPLING_MODE=stealth`, which renders JavaScript and solves Cloudflare. That
+  browser does **not** fit the free tier — use it on a local or larger run.
+
+`SCRAPLING_MODE` picks the default engine (`auto` — the default — uses the no-browser
+fetcher when installed, else httpx; `stealth`/`dynamic` use the browser; `off` pins
+httpx). The two HTML sources request `stealth` in `config/sources.yaml` and downgrade
+on their own when no browser is present. The connection-test detail and each snapshot
+record which engine fetched, so a page a stealth browser cleared is never presented as
+an ordinary fetch.
+
+**This is a transport upgrade, not a new source, and explicitly not a way around a
+licence.** A better fetcher does not make PitchBook, Crunchbase, X, Coresignal,
+LinkedIn or Blind fair game: their terms prohibit automated collection whether or not
+a fetcher could defeat their bot wall, so those stay key-gated below and are never
+routed through Scrapling. Capability is not permission — the same reason this engine
+already refused Apify LinkedIn/X scraping.
+
 ## Two keys that are worth setting and are cheap or free
 
 **`NVIDIA_API_KEY`** switches on the AI judgment (founder quality, moat, TAM, thesis

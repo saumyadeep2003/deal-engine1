@@ -74,14 +74,21 @@ sources:
     adapter: engine.adapters.careers.CareersAdapter
     interval_minutes: 1440
     requires_license: false
+    # stealth = Scrapling's browser fetcher (renders JS, clears bot walls) WHERE
+    # available; downgrades to scrapling-http (browser TLS fingerprint, no browser)
+    # and then to plain httpx when it is not — safe to leave set on the free tier.
+    fetch_engine: stealth
     notes: "Scrapes careers pages of pipeline companies for open req volume + function mix."
 
   - name: company_website
     adapter: engine.adapters.website.WebsiteAdapter
     interval_minutes: 1440
     requires_license: false
+    fetch_engine: stealth
     notes: "Brief §5 'Company surface area' — product positioning, customer logos
-      (from author-written alt text), pricing page + plan names. Post-filter only."
+      (from author-written alt text), pricing page + plan names. Post-filter only.
+      fetch_engine=stealth: startup sites are JS-heavy and often bot-walled; a plain
+      httpx 403 or empty shell here is the direct cause of missing descriptions."
 
   - name: company_news
     adapter: engine.adapters.company_news.CompanyNewsAdapter
