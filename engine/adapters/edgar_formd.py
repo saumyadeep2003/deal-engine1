@@ -65,7 +65,23 @@ class EdgarFormDAdapter(BaseAdapter):
         seen_adsh: set[str] = set()
         hits: list[dict] = []
 
-        any_success = False
+        # -- 1. THE INDEX SWEEP: every Form D, not keyword hits ----------------
+        # For its first months this adapter only ran twelve keyword searches
+        # against full-text search, which quietly inverted the engine's own
+        # architecture: a Form D whose text didn't contain one of our phrases
+        # did not exist to the system, so "completeness" was capped by
+        # vocabulary. EDGAR publishes a daily index of EVERY filing; sweeping it
+        # and letting our own deterministic filter decide relevance is what the
+        # funnel was designed for. The keyword search below survives as a safety
+        # net (it reaches back further than the index window); dedupe_key makes
+        # the overlap harmless.
+        for entry in self._index_sweep(checkpoint, end):
+            if entry["adsh"] not in seen_adsh:
+                seen_adsh.add(entry["adsh"])
+                hits.append({"src": entry, "keyword": "(daily index — all Form Ds)",
+                             "mode": self._last_fetch_mode})
+
+        any_success = bool(hits)
         for kw in self.queries:
             url = FTS_URL.format(query=quote(kw), start=checkpoint, end=end)
             try:
@@ -125,6 +141,62 @@ class EdgarFormDAdapter(BaseAdapter):
         elif not signals:
             raise RuntimeError("EDGAR full-text search unreachable and no snapshot available")
         return signals
+
+    # -- daily index sweep -----------------------------------------------------
+
+    INDEX_URL = ("https://www.sec.gov/Archives/edgar/daily-index/"
+                 "{year}/QTR{q}/form.{ymd}.idx")
+    max_index_days = 5      # per run; the checkpoint carries continuity between runs
+
+    def _index_sweep(self, checkpoint: str, end: str) -> list[dict]:
+        """Every Form D filed since the checkpoint, from the daily form index.
+
+        The index is plain text, one line per filing, published nightly. Weekends
+        and market holidays have no file — a 404 there is a calendar fact, not an
+        error, and must not mark the source degraded."""
+        from datetime import date, timedelta
+        try:
+            start = date.fromisoformat(checkpoint[:10])
+            stop = date.fromisoformat(end[:10])
+        except ValueError:
+            return []
+        days = int(self.cfg.get("max_index_days", self.max_index_days))
+        first = max(start, stop - timedelta(days=days - 1))
+        out: list[dict] = []
+        d = first
+        while d <= stop:
+            ymd = d.strftime("%Y%m%d")
+            url = self.INDEX_URL.format(year=d.year, q=(d.month - 1) // 3 + 1, ymd=ymd)
+            try:
+                body, _ = self.http_get(url, retries=0)
+            except Exception:  # noqa: BLE001 — no file on a non-trading day
+                d += timedelta(days=1)
+                continue
+            out.extend(self.parse_form_index(body, d.isoformat()))
+            d += timedelta(days=1)
+        return out
+
+    @staticmethod
+    def parse_form_index(text: str, file_date: str) -> list[dict]:
+        """Form D lines out of a daily form.idx. Shaped like an FTS hit so the
+        one processing path downstream serves both discovery routes."""
+        out: list[dict] = []
+        for line in (text or "").splitlines():
+            # 'D    <company name>   <CIK>   <date>   edgar/data/<cik>/<adsh>.txt'
+            if not (line.startswith("D ") or line.startswith("D/A ")):
+                continue
+            m = re.search(r"edgar/data/(\d+)/([\d-]{18,22})\.txt\s*$", line)
+            if not m:
+                continue
+            cik, adsh = int(m.group(1)), m.group(2)
+            form = line.split()[0]
+            name = re.sub(r"\s{2,}.*$", "", line[len(form):].strip()).strip()
+            if not name:
+                continue
+            out.append({"adsh": adsh, "ciks": [cik], "file_date": file_date,
+                        "form": form, "display_names": [name],
+                        "biz_states": [], "biz_locations": []})
+        return out
 
     # -- detail parse ----------------------------------------------------------
 

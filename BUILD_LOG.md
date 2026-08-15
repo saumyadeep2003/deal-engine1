@@ -600,3 +600,45 @@ Chronological log of judgment calls made while building. Part of the deliverable
     surfaced immediately: the growth target printed as "≥ 0.4% YoY" (the config stores a
     fraction) and the tier-1 target printed as "[3, 4]" — both in the row a partner reads to
     decide whether a company clears the bar.
+71. **The engine as an MCP server — the hybrid, tested without spending anything.** The
+    request was to try the hybrid architecture while leaving the hosted API untouched and
+    buying nothing, so `mcp_server.py` is a second entry point onto the same engine rather
+    than a second service: `web/api.py` does not import it, `requirements.txt` does not carry
+    its dependency (it lives in `requirements-mcp.txt`), and Render never runs it. Deleting
+    the file would not change the deployment — verified by diffing every deployed path after
+    the change and finding it empty.
+    Two decisions make it more than a REST mirror with different punctuation. The tools are
+    shaped like *questions* — `investor_activity`, `thesis_scan`, `emerging_sectors` — rather
+    than like endpoints, because a model choosing between thirteen verbs it understands picks
+    correctly far more often than one composing thirty routes. And every payload carries its
+    own caveats: `commentary` states that an empty result means "not found in free sources"
+    rather than "nobody is talking about them", `pipeline_search` states that its ranks are
+    cohort-relative, a cluster with unmeasured consensus states it is volume rather than a
+    trend. That is deliberate. Everywhere else the discipline is enforced by code — the
+    gatekeeper drops an unsourced sentence, the validator refuses an unresolvable citation —
+    but a conversation has no such mechanism, and the model is free to summarise. Putting the
+    caveat inside the payload is the only place it survives into the answer, and the tests
+    assert those sentences are present.
+    One bug caught by the suite: `search_progress` queried a `step` column that does not
+    exist (`run_steps` uses `key`/`seq`), which surfaces to a model as an opaque tool failure
+    — and a model's usual recovery from an opaque failure is to answer from memory, which is
+    precisely the failure mode this system exists to prevent.
+72. **Phase 1 of the completeness roadmap: discovery stops being keyword-shaped.** Four
+    changes, one theme — the engine now sees channels whole instead of sampling them.
+    (a) The EDGAR adapter sweeps the DAILY FORM INDEX: every Form D filed, parsed locally,
+    with the engine's own deterministic filter deciding relevance. The twelve keyword
+    searches survive as a safety net (they reach further back than the index window) and
+    `dedupe_key` makes the overlap harmless. This closes the architectural inversion where
+    a filing that didn't contain one of our phrases did not exist to the system.
+    (b) `company_news`: a standing Google News RSS watch per tracked company — tracking,
+    not re-discovery. Names are quoted plus funding-context terms, and generic names
+    ("Text", "Built") are refused outright, because wrong news attributed to a tracked
+    company misleads a partner worse than a missed article.
+    (c) Press-release wires (PRNewswire, GlobeNewswire, Business Wire) join the news feeds —
+    funding announcements at the source, hours ahead of aggregators.
+    (d) `companies_house`: the UK statutory registry, free API key, officers with roles and
+    appointment dates. Two disciplines: registry matches are exact-normalised only (fuzzy
+    matching a five-million-entity registry is how a stranger's board lands on a pipeline
+    company), and officers are emitted in the `related_persons` shape so
+    `people.sync_from_filings()` ingests them with no new code path — one pipeline for
+    people regardless of which registry named them.

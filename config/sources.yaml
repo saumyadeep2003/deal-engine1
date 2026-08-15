@@ -26,6 +26,15 @@ sources:
       - {name: The Generalist, url: "https://www.generalist.com/feed.xml", kind: analysis}
       - {name: Stratechery, url: "https://stratechery.com/feed/", kind: analysis}
       - {name: The Diff (Byrne Hobart), url: "https://www.thediff.co/feed", kind: analysis}
+      - name: PRNewswire (all releases)
+        url: https://www.prnewswire.com/rss/news-releases-list.rss
+        kind: mainstream
+      - name: GlobeNewswire (public co news)
+        url: https://www.globenewswire.com/RssFeed/orgclass/1/feedTitle/GlobeNewswire%20-%20News%20about%20Public%20Companies
+        kind: mainstream
+      - name: Business Wire (tech)
+        url: https://feed.businesswire.com/rss/home/?rss=G1QFDERJXkJeEFpRVw==
+        kind: mainstream
       # Brief §5 names these under News feeds. Public RSS availability varies by
       # publisher and changes without notice — a feed that stops returning items
       # is reported by the source-health monitor (component 14) rather than
@@ -73,6 +82,25 @@ sources:
     requires_license: false
     notes: "Brief §5 'Company surface area' — product positioning, customer logos
       (from author-written alt text), pricing page + plan names. Post-filter only."
+
+  - name: company_news
+    adapter: engine.adapters.company_news.CompanyNewsAdapter
+    interval_minutes: 360
+    requires_license: false
+    max_companies: 40
+    notes: "Standing Google News watch per tracked company — tracking, not just
+      discovery. Quoted name + funding-context terms; generic names are skipped
+      because wrong attribution is worse than a missed article."
+
+  - name: companies_house
+    adapter: engine.adapters.companies_house.CompaniesHouseAdapter
+    interval_minutes: 1440
+    requires_license: false
+    env_key: COMPANIES_HOUSE_API_KEY
+    max_companies: 20
+    notes: "UK statutory registry — free API key. Officers with roles and
+      appointment dates for UK pipeline companies; emitted in the related_persons
+      shape so people.py ingests them with no new code path."
 
   # ---- Free, permitted substitutes for the paid vendors --------------------
   # Each of these exists to be read: documented, key-free, and nobody's terms are

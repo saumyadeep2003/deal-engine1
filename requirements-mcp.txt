@@ -1,0 +1,10 @@
+# MCP server only — deliberately NOT in requirements.txt.
+#
+# The hosted Render service installs requirements.txt and runs serve.py. Adding
+# the MCP SDK there would put a dependency into a deployment that never imports
+# it, for no benefit and one more thing to break on a build. The MCP server runs
+# on your Mac against the same database; it is a second doorway, not a second
+# service.
+#
+#   pip install -r requirements.txt -r requirements-mcp.txt
+mcp>=1.2

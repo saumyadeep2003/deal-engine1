@@ -30,6 +30,8 @@ SOURCE_LABELS = {
     "github_trending": "Checking GitHub activity",
     "reddit": "Reading Reddit discussions",
     "careers_pages": "Reading company careers pages",
+    "company_news": "Checking the news watch on every tracked company",
+    "companies_house": "Reading UK registry officers (Companies House)",
     "company_website": "Visiting company websites",
 }
 

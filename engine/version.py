@@ -70,6 +70,11 @@ def features() -> dict:
         "company_profiles": _has("engine.profile", "section"),
         "founders_from_filings": _has("engine.people", "sync_from_filings"),
         "criteria_estimates": _has("engine.estimates", "criteria_scorecard"),
+        "edgar_index_sweep": _has("engine.adapters.edgar_formd", "EdgarFormDAdapter")
+                             and hasattr(__import__("engine.adapters.edgar_formd",
+                                 fromlist=["_"]).EdgarFormDAdapter, "parse_form_index"),
+        "company_news_watch": _has("engine.adapters.company_news", "CompanyNewsAdapter"),
+        "companies_house": _has("engine.adapters.companies_house", "CompaniesHouseAdapter"),
     }
 
 
