@@ -253,6 +253,19 @@ def main() -> int:
           {s["name"] for s in html_sources} == {"company_website", "careers_pages"},
           str(sorted(s["name"] for s in html_sources)))
 
+    # ==== 11. an absent optional package must never flag the build stale ===
+    reset()
+    _remove_scrapling()
+    from engine import version
+    vi = version.info()
+    check("scrapling absent -> version still reports complete, nothing 'missing'",
+          vi["complete"] and vi["missing"] == []
+          and vi["optional"]["scrapling_installed"]["on"] is False,
+          "the first deploy without it printed 'RUNNING OLDER CODE' over a current build")
+    check("...and the optional entry says how to enable it",
+          "requirements-scrapling" in vi["optional"]["scrapling_installed"]["how_to_enable"],
+          "")
+
     print("\n" + "=" * 60)
     passed = sum(1 for _, ok, _ in RESULTS if ok)
     print(f"FETCH ENGINE: {passed}/{len(RESULTS)} passed")

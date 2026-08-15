@@ -12,7 +12,10 @@ services:
     name: deal-engine
     runtime: python
     plan: free
-    buildCommand: pip install -r requirements.txt
+    # requirements-scrapling.txt adds the no-browser Scrapling Fetcher (browser TLS
+    # fingerprints) for company/careers pages — fits the free tier. If a build ever
+    # fails on it, dropping it from this line is safe: the engine falls back to httpx.
+    buildCommand: pip install -r requirements.txt -r requirements-scrapling.txt
     startCommand: python serve.py
     healthCheckPath: /healthz
     envVars:

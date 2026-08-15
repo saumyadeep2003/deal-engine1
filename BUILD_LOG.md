@@ -835,3 +835,21 @@ Chronological log of judgment calls made while building. Part of the deliverable
     the scrapling-exception and status-error paths, provenance stamping, and the ToS
     guard. Version markers: `pluggable_fetch_engine` (code present) and
     `scrapling_installed` (the runtime answer to "is the upgraded fetcher actually live?").
+79. **The version report cried wolf on a healthy deploy.** First deploy after 78, without
+    the optional scrapling install, and /api/version printed "THIS DEPLOY IS RUNNING
+    OLDER CODE — missing: scrapling_installed" over a build that was entirely current
+    (57280a2, every real capability probing true). The mistake was mine and it was a
+    category error: `scrapling_installed` is a RUNTIME check on an optional dependency,
+    and I put it in features(), where every false value is read as "the deploy did not
+    take" — the exact sentence this module exists to make trustworthy. An optional
+    package being absent is a configured state, not a stale build; a report that raises
+    a false alarm teaches its reader to ignore it, which un-solves version.py's founding
+    problem (the week of debugging features that were never deployed). Optional
+    capabilities now live in a separate `optional` section that never feeds `missing`/
+    `complete`, and each entry carries how to switch it on. Meanwhile render.yaml's
+    buildCommand now installs `requirements-scrapling.txt` (with the `[fetchers]` extra —
+    bare `scrapling` is parser-only in 0.4.x), so the next deploy turns the upgraded
+    fetcher on for real; if that install ever breaks a build, dropping it from the line
+    is safe because httpx remains the floor. Two checks added to fetching_test: scrapling
+    absent -> complete stays true and nothing is "missing"; the optional entry names its
+    enable path.

@@ -12,4 +12,4 @@
 #
 # The two HTML sources (company_website, careers_pages) request `fetch_engine: stealth`
 # in config/sources.yaml and downgrade gracefully when a browser is not present.
-scrapling>=0.2
+scrapling[fetchers]>=0.4    # the extra pulls curl_cffi; bare `scrapling` is parser-only in 0.4.x

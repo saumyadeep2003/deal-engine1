@@ -87,24 +87,48 @@ def features() -> dict:
         "domains_from_signals": _has("engine.domains", "from_signals"),
         "founder_backfill": _has("engine.people", "backfill_related_persons"),
         "pluggable_fetch_engine": _has("engine.adapters.fetching", "raw_fetch"),
-        # true only when scrapling is actually installed in THIS build — the code
-        # path exists regardless (marker above), but a partner asking "is the
-        # upgraded fetcher live?" wants the runtime answer, not the code's presence.
-        "scrapling_installed": (_has("engine.adapters.fetching", "scrapling_available")
-                                and __import__("engine.adapters.fetching",
-                                    fromlist=["_"]).scrapling_available()),
+    }
+
+
+def optional() -> dict:
+    """Optional capabilities: OFF is a legitimate configured state, never evidence
+    of a stale deploy. These live outside features() on purpose — the first cut
+    put scrapling_installed IN features(), and the first deploy without the
+    optional package printed 'THIS DEPLOY IS RUNNING OLDER CODE' over a build
+    that was entirely current. A report that cries wolf on a healthy deploy
+    teaches people to ignore it, which un-solves the exact problem this module
+    was built for."""
+    def _runtime(module: str, fn: str) -> bool:
+        try:
+            mod = __import__(module, fromlist=["_"])
+            return bool(getattr(mod, fn)())
+        except Exception:  # noqa: BLE001
+            return False
+
+    return {
+        "scrapling_installed": {
+            "on": _runtime("engine.adapters.fetching", "scrapling_available"),
+            "how_to_enable": "add `-r requirements-scrapling.txt` to the pip install "
+                             "in the build command (render.yaml carries it); without "
+                             "it the engine fetches HTML via plain httpx, which works "
+                             "but gets 403/JS-shell responses on defended sites",
+        },
     }
 
 
 def info() -> dict:
     f = features()
     missing = sorted(k for k, v in f.items() if not v)
+    opt = optional()
     return {
         "commit": commit(),
         "branch": branch(),
         "features": f,
         "missing": missing,
         "complete": not missing,
+        # optional extras are reported, never counted as missing: OFF here means
+        # "not configured", and each entry says how to turn it on.
+        "optional": opt,
         "note": ("every expected capability is present in the running build"
                  if not missing else
                  "THIS BUILD IS INCOMPLETE — the following are missing from the running "
