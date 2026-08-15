@@ -54,6 +54,14 @@ max_tokens_by_stage:
   chat: 1200
 
 limits:
+  # The strong model only. Inkling is a reasoning model: 43s on a toy probe, over
+  # 75s on real company contexts — so at the default timeout every escalation and
+  # every Deep-Dive-routed judgement TIMED OUT, fell back to 8b, and the strong
+  # model never actually judged anything (run 20 logged 38 stubbed score calls on
+  # it). 150s costs at most ~2.5 min per Deep Dive candidate in a step that
+  # already runs 15 min; the default timeout below still governs every other
+  # model, so a dead provider cannot stall the whole search.
+  strong_model_timeout_seconds: 150
   # Was 8, when a brief meant a slow flagship-tier call. Judging now runs on an 8b
   # model in ~3s, so the cost that justified the cap is gone — and a cap of 8 left
   # 22 of 30 pipeline companies with no brief at all, which reads as a broken tool

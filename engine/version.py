@@ -77,6 +77,12 @@ def features() -> dict:
         "companies_house": _has("engine.adapters.companies_house", "CompaniesHouseAdapter"),
         "apollo_enrich": _has("engine.adapters.apollo_enrich", "ApolloEnrichAdapter"),
         "domain_resolver": _has("engine.domains", "backfill"),
+        "strong_model_for_deep_dive": _has("engine.judge", "deep_dive_candidates"),
+        "verified_rejections": _has("engine.judge", "REJECTION_CONFIRM"),
+        "context_evidence_fingerprint": (
+            _has("engine.judge", "FINGERPRINT_VERSION")
+            and __import__("engine.judge", fromlist=["_"]).FINGERPRINT_VERSION == "ctx1"),
+        "llm_robustness": _has("engine.llm", "last_model_used"),
     }
 
 

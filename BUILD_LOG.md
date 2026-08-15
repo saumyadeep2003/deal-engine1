@@ -666,3 +666,87 @@ Chronological log of judgment calls made while building. Part of the deliverable
     amounts are trusted into amount_usd, and the probe uses the zero-credit auth endpoint —
     whether a free-plan key reaches the enrich endpoint is answered by the first run, not
     assumed.
+75. **Three ways a model verdict reached a partner — or deleted a company — with nothing
+    having checked it.** All three were found by auditing the AI-assessment path rather
+    than by anything failing, which is the point: each one produced output that looked
+    exactly like output from a working system.
+    (a) *Escalation only fired on the failure that announces itself.* A Deep Dive
+    candidate was judged by the 8b model and escalated to `strong_model` only when the
+    answer came back with every field null. All-nulls is loud and easy to catch. A
+    fluent, confident, wrong assessment is neither, and it is the one a partner acts on —
+    escalation had never once fired for it, because there is nothing in the response to
+    fire on. Deep Dive candidates now go to the strong model FIRST. Candidacy is read
+    from the current recommendation (a partner's own override outranking the computed
+    call), which puts the routing one run behind — `score_all` writes recommendations
+    after judging — and that is deliberate: predicting the recommendation from the
+    computed composite before the cohort percentiles that define it exist would route on
+    a number that is not the number the partner reads. The same deliberate lag already
+    governs Apollo enrichment (74). A stored fast-model judgement no longer satisfies a
+    Deep Dive company either, or "always strong" would have applied only to companies
+    promoted before they were first judged and to no one else.
+    (b) *One cheap model could delete a company on its own say-so.* `is_venture_relevant:
+    false` sets `status='filtered'`, and it was the only irreversible unverified model
+    action in the system — every other model output is a number or a sentence that a
+    reader can discount, while this one removes the company from every view before anyone
+    sees it. It now needs two models to agree. The strong model's own rejection stands
+    (it IS the second opinion); a fast-model rejection is put to the strong model, and
+    if that one disagrees, cannot answer, or is not configured, the rejection is recorded
+    unconfirmed, the company keeps its status, and a review_queue row says who said what.
+    When the strong model overturns a rejection its own answer becomes the judgement
+    rather than a bare veto — it has just produced a full assessment of a company the
+    fast model was about to delete. The failure direction is chosen: a wrong company left
+    in the pipeline costs a partner a glance, a right one dropped costs everything and is
+    invisible, because nobody ever sees what was filtered. Disputes are fingerprinted
+    against the evidence that produced them, so the same argument is not re-run (or
+    re-queued) every search, and new evidence reopens it automatically.
+    (c) *The judgement cache was keyed on a question narrower than the one being asked.*
+    `count:max_id` over the signals table answers "has a new signal arrived?" — but the
+    prompt is built by `_context()`, which also carries founders, the company's sector,
+    stage and HQ, and the payload of every signal. Founders synced out of a Form D (69),
+    a profile written from the company's own website (68), a corrected sector, an
+    in-place payload edit: all of them change what the model is shown and none of them
+    move a row count or a maximum id. So the company whose founders were finally read
+    kept the judgement made when its prompt said nothing about its team, and displayed it
+    as a current assessment. The key is now a hash of the exact context string, which is
+    the thing the cache is actually about — one extra local context build per company per
+    run, against a model call. Old `count:max_id` keys are still honoured while they
+    match, so the deploy that fixes this does not invalidate every stored judgement at
+    once and collapse coverage to zero on restart; each company upgrades to the new key
+    the next time it is judged.
+    `tests/judge_verification_test.py` (35 checks) scripts the models per company rather
+    than through one shared queue — a single queue silently misaligns the moment one
+    company makes two calls and another makes one, and then the test is measuring the
+    queue instead of the routing. Three new `/api/version` markers so a deploy can prove
+    it took: `strong_model_for_deep_dive`, `verified_rejections`,
+    `context_evidence_fingerprint`.
+76. **Run 20 read back from the live deployment: four ways real output was being thrown
+    away.** The user's complaint was "briefs are missing information" — and the deployed
+    service's own diagnostics named every cause. (a) 68 review_queue rows, dominant
+    pattern: the 8b model returns `tam.assumptions` as one string ('revenue run-rate'),
+    the schema wants a list, and the ENTIRE judgement — every score, every reasoning
+    sentence, the model spend that produced it — was discarded over a distinction no
+    reader cares about. A `field_validator(mode="before")` now coerces string to list
+    (splitting on semicolons/newlines); nulls stay null. This was the single biggest
+    reason AI-assessment coverage sat at 22/347 while every search spent a full
+    JUDGE_TOP_N=40 budget: the same top-ranked companies failed the same way every run
+    and were re-attempted every run. (b) 'no parseable JSON found' where the model echoed
+    the SCHEMA before the answer: the greedy first-to-last-brace match swallowed
+    schema+answer together and parsed as nothing. _extract_json now falls back to
+    scanning balanced objects and returns the last one that parses and is not
+    schema-shaped; a pure schema echo now fails fast into the retry instead of
+    'validating' into an all-null judgement. (c) Every escalation to inkling timed out at
+    the shared 75s ceiling (38 stubbed score calls on the live box), fell back to 8b —
+    and the answer was then LABELLED inkling, because the silent fallback inside
+    _raw_complete was invisible to the caller. Two fixes: `strong_model_timeout_seconds:
+    150` gives the reasoning model alone a longer leash (a shorter value than the default
+    is ignored — the setting extends patience, never cuts it), and llm.last_model_used()
+    lets the judge label a judgement with the model that actually spoke. The label is
+    load-bearing twice over: the cache re-judges a Deep Dive company whose judgement
+    came from a weaker model, and a rejection 'confirmed' by the fallback answering in
+    the strong model's place is the rejecting model class agreeing with itself — that
+    now counts as unconfirmed, and says so. (d) The alerts step died on Postgres with
+    `syntax error at or near "$2"`: `company_id IS ?` is SQLite's null-safe equals and a
+    Postgres syntax error — invisible to every sqlite-backed test, fatal on the Supabase
+    deployment. It is now two dialect-free queries branched on None.
+    `tests/llm_robustness_test.py` (14 checks) pins all four, including the live
+    review_queue payload verbatim.

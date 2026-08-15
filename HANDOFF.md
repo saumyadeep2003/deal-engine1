@@ -33,8 +33,10 @@ plus 10 licence-gated stubs) → entity resolution → deterministic filter →
 founders from filings (`people.py`) → **domain resolver** (`domains.py`,
 Clearbit autocomplete + homepage validation) → profiles (`profile.py`, site →
 4-5 line overview, gatekeeper-checked) → enrichment → AI judgement
-(`judge.py`, evidence-fingerprint cache, JUDGE_TOP_N budget on companies
-lacking judgement, escalate-once-on-empty to strong_model) → cohort-percentile
+(`judge.py`, context-hash evidence fingerprint, JUDGE_TOP_N budget on companies
+lacking judgement, **Deep Dive candidates judged on strong_model first**,
+escalate-once-on-empty for everyone else, **a rejection needs two models to
+agree before it filters anything**) → cohort-percentile
 scoring → briefs (criteria scorecard from `estimates.py`) → commentary →
 sectors (TF-IDF clusters, fingerprint-deduped, vendor/event words barred) →
 peers → stale (90d flag, never delete) → publish (Excel rebuilds from DB;
@@ -64,9 +66,11 @@ config/sources.yaml. Digest: daily 07:00 IST (`thesis.yaml digest.days`).
 
 ## Test suites (all must stay green)
 
-`tests/acceptance.py` 19, `tests/deployment.py` 18 (needs uvicorn on :8787),
-`tests/gatekeeper_test.py` 22, `tests/events_test.py`, `tests/phase1_test.py` 14,
-`tests/mcp_test.py` 13. MCP server (`mcp_server.py`, stdio for Claude Desktop,
+`tests/acceptance.py` 19 (run `python demo.py` first), `tests/deployment.py` 18
+(needs the service on :8787 — start it with `python serve.py`, not bare uvicorn,
+or D12 fails on a missing scheduler log), `tests/gatekeeper_test.py` 22,
+`tests/events_test.py`, `tests/phase1_test.py` 14, `tests/mcp_test.py` 13,
+`tests/judge_verification_test.py` 35, `tests/llm_robustness_test.py` 14. MCP server (`mcp_server.py`, stdio for Claude Desktop,
 13 tools) exists but user **dropped the hybrid plan — API-only**; keep
 `web/api.py` free of mcp imports, `requirements-mcp.txt` separate.
 
@@ -78,11 +82,22 @@ config/sources.yaml. Digest: daily 07:00 IST (`thesis.yaml digest.days`).
 
 ## Immediate next work (user-agreed order)
 
-1. **AI-assessment verification fixes** (from last session's audit): route Deep
-   Dive candidates to strong_model always (escalation currently fires only on
-   EMPTY, never on wrong); require strong-model agreement before a fast-model
-   "not venture relevant" sets status=filtered (only irreversible unverified
-   model action); evidence fingerprint (`count:max_id`) misses in-place edits.
+1. ~~**AI-assessment verification fixes**~~ — **DONE, BUILD_LOG 75.** Deep Dive
+   candidates now judged on strong_model first (routing read from the current
+   recommendation, one run behind by design); a fast-model "not venture
+   relevant" needs strong-model agreement before it sets status=filtered, and an
+   unconfirmed rejection keeps the company and files a `review_queue` row of kind
+   `unconfirmed_rejection`; the evidence fingerprint is now a hash of the context
+   string (`ctx1:…`), so founders/profile/sector changes invalidate it — old
+   `count:max_id` keys still honoured while they match, so coverage does not
+   collapse on this deploy. **After the first live run, check**: `/api/version`
+   markers `strong_model_for_deep_dive` / `verified_rejections` /
+   `context_evidence_fingerprint` all true; the judge log line's
+   "N on thinkingmachines/inkling" count; and whether inkling actually answers
+   real Deep Dive contexts inside the 75s timeout (models.yaml notes it was
+   marginal — a timeout degrades to 8b via `fallback_model`, which is the old
+   behaviour, not a failure, but if it happens every time the routing is buying
+   nothing and the cost belongs elsewhere).
 2. **Corroboration scoring** — per claim: "filing + 2 articles" vs "one blog".
 3. **Feedback loop** — ~82 partner_actions rows teach nothing today: weekly
    logistic recalibration of scoring weights + recent overrides few-shot into
@@ -94,6 +109,22 @@ config/sources.yaml. Digest: daily 07:00 IST (`thesis.yaml digest.days`).
 5. Verify latest deploy picked up: news-watch scoping (Pass companies → monthly
    heartbeat only), domain resolver step, Apollo Deep-Dive-only enrichment
    (note: selects on PREVIOUS run's calls — one-run lag, deliberate).
+6. Surface `unconfirmed_rejection` review rows in the dashboard — they are
+   written and queryable but nothing in the UI shows them yet, and a queue
+   nobody can see is the same as no queue.
+7. **From reading run 20 on the live box** (BUILD_LOG 76 fixed the LLM-layer
+   causes; these remain): (a) top-of-pipeline entity junk is now the biggest
+   brief-quality problem — "Text", "VNET", "Ballet", "ycombinator.com" reach
+   Deep Dive because misattributed signals give them velocity/recency, and
+   junk names can't resolve a domain → no profile → no description/HQ → an
+   empty brief at rank 1 (registry-grade resolution, known-issues item, now
+   urgent). (b) HN-launch companies (e.g. Remarc, ranked #1) have their
+   product URL IN the Show-HN post — capture domain from the launch signal
+   instead of asking Clearbit, and profiles light up for exactly the
+   companies that are newest. (c) `people` step wrote 0 records on run 20 —
+   check whether new filings simply had no related-person XML or the sweep
+   is capped out. (d) Set `REDDIT_CLIENT_ID/SECRET` (commentary 3.5%) and
+   `COMPANIES_HOUSE_API_KEY` (0 UK items) — both free, both still unset.
 
 ## Known open issues
 

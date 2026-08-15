@@ -22,9 +22,19 @@ def _fire(rule: str, company_id: int | None, payload: dict, verbose: bool) -> bo
     """Rate-limited (per company per rule per day) + deduplicated."""
     window = thesis()["alerts"]["rate_limit_per_company_hours"]
     key = f"{rule}:{company_id or payload.get('investor', '?')}:{db.now_iso()[:10]}"
-    recent = db.q1("""SELECT id FROM alerts_log WHERE rule=? AND company_id IS ?
-                      AND created_at > datetime('now', ?)""",
-                   (rule, company_id, f"-{window} hours"))
+    # Two queries instead of `company_id IS ?`: SQLite's IS is a null-safe equals,
+    # but Postgres only allows IS against literal NULL — `IS $2` is a syntax error,
+    # which took this whole step down on the live deployment (run 20) while every
+    # local sqlite test stayed green. Branching on None is the one spelling that
+    # means the same thing in both dialects.
+    if company_id is None:
+        recent = db.q1("""SELECT id FROM alerts_log WHERE rule=? AND company_id IS NULL
+                          AND created_at > datetime('now', ?)""",
+                       (rule, f"-{window} hours"))
+    else:
+        recent = db.q1("""SELECT id FROM alerts_log WHERE rule=? AND company_id=?
+                          AND created_at > datetime('now', ?)""",
+                       (rule, company_id, f"-{window} hours"))
     if recent:
         return False
     try:

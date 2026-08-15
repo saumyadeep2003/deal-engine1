@@ -149,6 +149,36 @@ def complete(stage: str, system: str, user: str, tier: str | None = None) -> str
     return _raw_complete(model, stage, system, user)
 
 
+# The model that actually produced the last successful completion. The silent
+# fallback inside _raw_complete (routed model dies -> retry once on the model we
+# know answers) is the right behaviour for a partner waiting on a brief, but it
+# meant the CALLER could not know which model's words it was storing: a judgement
+# produced by the 8b fallback was labelled with the strong model it was routed to.
+# That label is load-bearing — the judgement cache re-judges a Deep Dive company
+# whose stored judgement came from a weaker model, so a mislabel makes a fallback
+# answer permanently impersonate a strong one.
+_LAST_MODEL_USED: list = [None]
+
+
+def last_model_used() -> str | None:
+    return _LAST_MODEL_USED[0]
+
+
+def _strong_timeout_for(model: str):
+    """Reasoning models are slow by nature, not broken: the strong model probed at
+    43s on a toy context and blows the default 75s on real ones, which turned every
+    escalation into a timeout -> fallback -> the fast model answering again — the
+    exact loop escalation exists to break. It alone gets a longer leash; the
+    default timeout stays where it is for everything else, because a 150s ceiling
+    on the 8b tier would just let a dead provider stall the whole search."""
+    limits = models_config()["limits"]
+    if model and model == models_config().get("strong_model"):
+        t = limits.get("strong_model_timeout_seconds")
+        if t and float(t) > float(limits["request_timeout_seconds"]):
+            return float(t)
+    return None
+
+
 def _raw_complete(model: str, stage: str, system: str, user: str) -> str:
     """The call itself, with an explicit model — so a diagnostic can probe any model
     without editing config and redeploying."""
@@ -168,7 +198,11 @@ def _raw_complete(model: str, stage: str, system: str, user: str) -> str:
     _tried_fallback = False
     for attempt in range(4):
         try:
-            resp = _get_client().chat.completions.create(
+            client = _get_client()
+            slow = _strong_timeout_for(model)
+            if slow:
+                client = client.with_options(timeout=slow)
+            resp = client.chat.completions.create(
                 model=model,
                 temperature=gen.get("temperature", 1.0),
                 top_p=gen.get("top_p", 0.95),
@@ -206,6 +240,7 @@ def _raw_complete(model: str, stage: str, system: str, user: str) -> str:
             _log(stage, model, 0, 0, stub=True)
             return STUB_PROVIDER_DOWN     # a key IS set — say what actually happened
     circuit_reset()
+    _LAST_MODEL_USED[0] = model          # post-fallback: the model that ANSWERED
     usage = resp.usage
     _log(stage, model, usage.prompt_tokens if usage else 0,
          usage.completion_tokens if usage else 0, stub=False)
@@ -251,14 +286,50 @@ def self_test(model_override: str | None = None, hard: bool = False) -> dict:
 
 
 def _extract_json(text: str) -> dict | list | None:
+    """Pull the answer object out of whatever the model wrapped it in.
+
+    The greedy first-brace-to-last-brace match fails on one observed and common
+    small-model habit: echoing the JSON SCHEMA it was shown before (or instead of)
+    the answer. Then the greedy span covers schema + prose + answer and parses as
+    nothing, and a real answer sitting right there was thrown away — 'no parseable
+    JSON found' in review_queue with the answer visible in the raw. So on failure,
+    walk every balanced {...} block and return the LAST one that parses: the answer
+    follows the echo, and a schema echo is recognisable (it carries "$defs"/
+    "properties"/"type" keys) and is never returned as an answer."""
+    looks_like_schema = lambda d: isinstance(d, dict) and (  # noqa: E731
+        "$defs" in d or "$schema" in d
+        or ("properties" in d and ("type" in d or "required" in d)))
     text = re.sub(r"^```[a-zA-Z]*\n?|```$", "", text.strip(), flags=re.M).strip()
     m = re.search(r"[\[{].*[\]}]", text, re.S)
-    if not m:
-        return None
-    try:
-        return json.loads(m.group(0))
-    except json.JSONDecodeError:
-        return None
+    if m:
+        try:
+            got = json.loads(m.group(0))
+            # A pure schema echo is syntactically valid JSON — returning it would
+            # 'validate' into an all-null judgement downstream. Failing here turns
+            # it into the retry-with-error it deserves.
+            if not looks_like_schema(got):
+                return got
+        except json.JSONDecodeError:
+            pass
+    candidates: list = []
+    depth, start = 0, None
+    for i, ch in enumerate(text):
+        if ch == "{":
+            if depth == 0:
+                start = i
+            depth += 1
+        elif ch == "}" and depth:
+            depth -= 1
+            if depth == 0 and start is not None:
+                try:
+                    candidates.append(json.loads(text[start:i + 1]))
+                except json.JSONDecodeError:
+                    pass
+                start = None
+    for cand in reversed(candidates):
+        if isinstance(cand, dict) and not looks_like_schema(cand):
+            return cand
+    return None
 
 
 def complete_json(stage: str, system: str, user: str, schema_model, tier: str | None = None,
