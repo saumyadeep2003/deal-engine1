@@ -17,9 +17,11 @@ from __future__ import annotations
 
 import json
 import re
+from urllib.parse import urlparse
 
 from . import db
 from .adapters.base import BaseAdapter
+from .filters import AGGREGATOR_DOMAINS
 
 SUGGEST = "https://autocomplete.clearbit.com/v1/companies/suggest?query={q}"
 LEGAL_RE = re.compile(r"[,.]?\s+(inc|corp|corporation|llc|ltd|co|plc|limited)\.?$", re.I)
@@ -68,6 +70,60 @@ def resolve(name: str, http: _Http | None = None) -> str | None:
     return None
 
 
+def _validated(dom: str, name: str, http: _Http) -> str | None:
+    """A candidate domain is attached only if its homepage knows this company's
+    name — same bar whether the candidate came from Clearbit or our own signals."""
+    b = base_name(name)
+    if not b:
+        return None
+    try:
+        page, _ = http.http_get(f"https://{dom}", retries=0)
+        if b.lower().split()[0] in (page or "").lower()[:20000]:
+            return dom
+    except Exception:  # noqa: BLE001
+        pass
+    return None
+
+
+def from_signals(company_id: int, name: str, http: _Http | None = None) -> str | None:
+    """Read the domain out of the company's OWN evidence before asking Clearbit.
+
+    The deployment's #1-ranked company (Remarc, an HN launch) had no domain and
+    therefore no profile, no description, no HQ — an empty brief at rank 1 —
+    while its Show HN signal carried the product URL the whole time. Clearbit's
+    autocomplete has never heard of a company that launched on Tuesday; the
+    launch post has. Aggregator/press hosts are refused (a TechCrunch link is
+    where we READ about the company, not where the company lives), and the
+    candidate passes the same homepage-must-know-the-name validation as every
+    Clearbit result."""
+    http = http or _Http()
+    rows = db.q("""SELECT url, payload_json FROM signals WHERE company_id=?
+                   ORDER BY observed_at DESC LIMIT 40""", (company_id,))
+    seen: set[str] = set()
+    for r in rows:
+        try:
+            p = json.loads(r["payload_json"] or "{}")
+        except (json.JSONDecodeError, TypeError):
+            p = {}
+        for u in (p.get("external_url"), p.get("website"), p.get("homepage")):
+            if not u or not isinstance(u, str):
+                continue
+            try:
+                host = (urlparse(u).netloc or "").lower().split(":")[0]
+            except ValueError:
+                continue
+            dom = host[4:] if host.startswith("www.") else host
+            if not dom or dom in seen:
+                continue
+            seen.add(dom)
+            if dom in AGGREGATOR_DOMAINS or any(dom.endswith("." + a)
+                                                for a in AGGREGATOR_DOMAINS):
+                continue
+            if _validated(dom, name, http):
+                return dom
+    return None
+
+
 def backfill(limit: int = 40, verbose: bool = True) -> int:
     """Resolve domains for the best-ranked companies that lack one — best first,
     so every downstream reader (profile, hiring, Apollo) lights up where a
@@ -89,9 +145,10 @@ def backfill(limit: int = 40, verbose: bool = True) -> int:
     http = _Http()
     n = 0
     for r in rows:
-        dom = resolve(r["name"], http)
+        dom = from_signals(r["id"], r["name"], http) or resolve(r["name"], http)
         cache_put(r["id"], "domain_attempt", dom or None,
-                  "clearbit autocomplete + homepage validation", 0.7,
+                  "own launch/website signals, then clearbit autocomplete —"
+                  " homepage-validated either way", 0.7,
                   unavailable_reason=None if dom else "no validated match")
         if not dom:
             continue

@@ -70,7 +70,8 @@ config/sources.yaml. Digest: daily 07:00 IST (`thesis.yaml digest.days`).
 (needs the service on :8787 — start it with `python serve.py`, not bare uvicorn,
 or D12 fails on a missing scheduler log), `tests/gatekeeper_test.py` 22,
 `tests/events_test.py`, `tests/phase1_test.py` 14, `tests/mcp_test.py` 13,
-`tests/judge_verification_test.py` 35, `tests/llm_robustness_test.py` 14. MCP server (`mcp_server.py`, stdio for Claude Desktop,
+`tests/judge_verification_test.py` 35, `tests/llm_robustness_test.py` 14,
+`tests/identity_test.py` 18. MCP server (`mcp_server.py`, stdio for Claude Desktop,
 13 tools) exists but user **dropped the hybrid plan — API-only**; keep
 `web/api.py` free of mcp imports, `requirements-mcp.txt` separate.
 
@@ -112,19 +113,19 @@ or D12 fails on a missing scheduler log), `tests/gatekeeper_test.py` 22,
 6. Surface `unconfirmed_rejection` review rows in the dashboard — they are
    written and queryable but nothing in the UI shows them yet, and a queue
    nobody can see is the same as no queue.
-7. **From reading run 20 on the live box** (BUILD_LOG 76 fixed the LLM-layer
-   causes; these remain): (a) top-of-pipeline entity junk is now the biggest
-   brief-quality problem — "Text", "VNET", "Ballet", "ycombinator.com" reach
-   Deep Dive because misattributed signals give them velocity/recency, and
-   junk names can't resolve a domain → no profile → no description/HQ → an
-   empty brief at rank 1 (registry-grade resolution, known-issues item, now
-   urgent). (b) HN-launch companies (e.g. Remarc, ranked #1) have their
-   product URL IN the Show-HN post — capture domain from the launch signal
-   instead of asking Clearbit, and profiles light up for exactly the
-   companies that are newest. (c) `people` step wrote 0 records on run 20 —
-   check whether new filings simply had no related-person XML or the sweep
-   is capped out. (d) Set `REDDIT_CLIENT_ID/SECRET` (commentary 3.5%) and
-   `COMPANIES_HOUSE_API_KEY` (0 UK items) — both free, both still unset.
+7. ~~**From reading run 20 on the live box**~~ — **(a)-(c) DONE, BUILD_LOG 77.**
+   Uncorroborated single-word identities are held at Watch (never deleted;
+   reason in the feature vector; cap lifts when a domain/filing/round/founder
+   lands); aggregator-domain names dropped by the filter even from hot rows;
+   domains now read from the company's own launch/website signals before
+   Clearbit; founders backfilled from old filings' never-fetched XML (60/run,
+   newest first). **Still user action:** set `REDDIT_CLIENT_ID/SECRET`
+   (commentary 3.5%) and `COMPANIES_HOUSE_API_KEY` (0 UK items) on Render —
+   both free. **After next live run check:** the judge line for "N on
+   thinkingmachines/inkling" (does the 150s ceiling let it answer real
+   contexts?), founder coverage climbing past 75/347, top picks carrying
+   descriptions, and `/api/coverage`'s "AI assessment written" rising now
+   that tam.assumptions no longer kills judgements.
 
 ## Known open issues
 

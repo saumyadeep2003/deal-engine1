@@ -45,9 +45,31 @@ def classify_role(titles: list[str] | None) -> str:
     return "related person"
 
 
+def _ingest_people(company_id: int, signal_id: int, url: str | None, issuer: str,
+                   people: list[dict]) -> int:
+    """The one insertion path, whichever way the related-persons block arrived.
+    Idempotent: a person already recorded for a company is left alone."""
+    if VEHICLE_NAME_RE.search(issuer or ""):
+        return 0              # a fund's officers are not a startup's team
+    added = 0
+    for p in people:
+        name = (p.get("name") or "").strip()
+        if not name or len(name) < 4:
+            continue
+        if db.q1("SELECT id FROM founders WHERE company_id=? AND name=?",
+                 (company_id, name)):
+            continue
+        role = classify_role(p.get("titles"))
+        db.insert("founders", {
+            "company_id": company_id, "name": name,
+            "notes": f"{role} per SEC Form D ({', '.join(p.get('titles') or []) or 'no title given'})"
+                     f" [S:{signal_id}] {url or ''}"[:400]})
+        added += 1
+    return added
+
+
 def sync_from_filings(verbose: bool = True) -> int:
-    """Copy Form D related persons into `founders`. Idempotent: a person already
-    recorded for a company is left alone, so re-running never duplicates a team."""
+    """Copy Form D related persons into `founders` from payloads that carry them."""
     rows = db.q("""SELECT s.id, s.company_id, s.url, s.payload_json, c.name
                    FROM signals s JOIN companies c ON c.id=s.company_id
                    WHERE s.kind IN ('filing','fund_formation') AND s.company_id IS NOT NULL
@@ -62,23 +84,66 @@ def sync_from_filings(verbose: bool = True) -> int:
         if not people:
             continue
         issuer = str(payload.get("issuer") or r["name"] or "")
-        if VEHICLE_NAME_RE.search(issuer):
-            continue          # a fund's officers are not a startup's team
-        for p in people:
-            name = (p.get("name") or "").strip()
-            if not name or len(name) < 4:
-                continue
-            if db.q1("SELECT id FROM founders WHERE company_id=? AND name=?",
-                     (r["company_id"], name)):
-                continue
-            role = classify_role(p.get("titles"))
-            db.insert("founders", {
-                "company_id": r["company_id"], "name": name,
-                "notes": f"{role} per SEC Form D ({', '.join(p.get('titles') or []) or 'no title given'})"
-                         f" [S:{r['id']}] {r['url'] or ''}"[:400]})
-            added += 1
+        added += _ingest_people(r["company_id"], r["id"], r["url"], issuer, people)
     if verbose:
         print(f"  people: {added} founder/officer record(s) added from Form D filings")
+    return added
+
+
+def backfill_related_persons(limit: int = 60, verbose: bool = True) -> int:
+    """Fetch the detail XML for filings whose people were never read.
+
+    The founder gap is not new filings — it is OLD ones. The EDGAR adapter reads
+    primary_doc.xml for at most `max_detail_fetches` filings per run, and every
+    filing beyond the cap was stored WITHOUT its related-persons block. Signals
+    are immutable, so those payloads can never be repaired in place — and founder
+    coverage sat at 75/347 with the names sitting on SEC's servers, free.
+
+    This reads the XML for filings on live companies whose payload has no
+    `related_persons` key at all (a fetched-but-empty list means the filing
+    genuinely named nobody — refetching it would learn nothing), writes the
+    people into `founders` (a mutable table — no immutability to violate), and
+    records one attempt per signal in enrichment_cache so a dead fetch is not
+    hammered forever. SEC asks for a descriptive User-Agent and modest rates,
+    which BaseAdapter.http_get already provides; `limit` keeps one run polite.
+    Run 20's people step said "0 records" and was telling the truth about the
+    wrong thing: no NEW payloads carried people, while 100+ old filings had
+    never been asked."""
+    from .adapters.edgar_formd import EdgarFormDAdapter
+    from .enrichment import cache_put
+    rows = db.q("""SELECT s.id, s.company_id, s.url, s.payload_json, c.name
+                   FROM signals s JOIN companies c ON c.id=s.company_id
+                   WHERE s.kind='filing' AND c.is_synthetic=0
+                   AND c.status IN ('pipeline','hot','watchlist')
+                   AND s.payload_json NOT LIKE '%related_persons%'
+                   AND NOT EXISTS (SELECT 1 FROM enrichment_cache e
+                                   WHERE e.company_id=s.company_id
+                                   AND e.field='rp_attempt_' || s.id)
+                   ORDER BY s.observed_at DESC LIMIT ?""", (limit,))
+    adapter = EdgarFormDAdapter()
+    added, fetched = 0, 0
+    for r in rows:
+        try:
+            payload = json.loads(r["payload_json"] or "{}")
+        except (json.JSONDecodeError, TypeError):
+            continue
+        cik, adsh = payload.get("cik"), payload.get("accession")
+        if not cik or not adsh:
+            cache_put(r["company_id"], f"rp_attempt_{r['id']}", None, "edgar detail xml",
+                      0.9, unavailable_reason="filing signal carries no cik/accession")
+            continue
+        detail = adapter._fetch_detail(int(cik), str(adsh))
+        if not detail:        # unreachable/unparseable — no cache row, retry next run
+            continue
+        fetched += 1
+        cache_put(r["company_id"], f"rp_attempt_{r['id']}",
+                  len(detail.get("related_persons") or []), "edgar detail xml", 0.9)
+        issuer = str(payload.get("issuer") or detail.get("entity_name") or r["name"] or "")
+        added += _ingest_people(r["company_id"], r["id"], r["url"], issuer,
+                                detail.get("related_persons") or [])
+    if verbose:
+        print(f"  people backfill: {fetched} filing detail(s) read, "
+              f"{added} founder/officer record(s) recovered")
     return added
 
 

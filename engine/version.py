@@ -83,6 +83,9 @@ def features() -> dict:
             _has("engine.judge", "FINGERPRINT_VERSION")
             and __import__("engine.judge", fromlist=["_"]).FINGERPRINT_VERSION == "ctx1"),
         "llm_robustness": _has("engine.llm", "last_model_used"),
+        "identity_guard": _has("engine.filters", "identity_corroborated"),
+        "domains_from_signals": _has("engine.domains", "from_signals"),
+        "founder_backfill": _has("engine.people", "backfill_related_persons"),
     }
 
 

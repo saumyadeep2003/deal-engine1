@@ -239,9 +239,13 @@ def _execute(run_id: int, kind: str) -> None:
         # Syncing them BEFORE judging is the whole point: the judge builds its
         # evidence from the founders table, so doing this afterwards would leave
         # founder quality assessed on nothing for another whole run.
-        run_step("people", lambda st: st.progress(
-            f"{people_mod.sync_from_filings(verbose=False)} founder/officer record(s)"
-            " from filings"))
+        def people_step(st):
+            synced = people_mod.sync_from_filings(verbose=False)
+            st.progress(f"{synced} from new filings; reading older filings…")
+            recovered = people_mod.backfill_related_persons(verbose=False)
+            st.progress(f"{synced} founder/officer record(s) from new filings,"
+                        f" {recovered} recovered from older filings")
+        run_step("people", people_step)
         run_step("domains", lambda st: st.progress(
             f"{domains_mod.backfill(verbose=False)} website(s) found and validated for"
             " companies that had none"))

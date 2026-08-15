@@ -10,6 +10,47 @@ from .config import thesis
 
 _theme_res: list[tuple[str, str, re.Pattern]] | None = None
 
+# Domains of the CHANNELS the engine reads. Entity resolution occasionally
+# mis-parses a round-up or a share link and mints "ycombinator.com" as a company
+# — which then hoovers up misattributed signals, ranks on velocity, and reaches
+# Deep Dive with an empty brief (run 20 had it in the top-picks diff). A name
+# that IS one of our sources' domains is never a prospect.
+AGGREGATOR_DOMAINS = {
+    "ycombinator.com", "news.ycombinator.com", "techcrunch.com", "github.com",
+    "reddit.com", "arxiv.org", "sec.gov", "bloomberg.com", "reuters.com", "ft.com",
+    "businesswire.com", "prnewswire.com", "globenewswire.com", "medium.com",
+    "substack.com", "linkedin.com", "twitter.com", "x.com", "bsky.app",
+    "producthunt.com", "crunchbase.com", "pitchbook.com", "google.com",
+    "apps.apple.com", "play.google.com", "youtube.com", "wikipedia.org",
+}
+
+
+def identity_corroborated(company_id: int) -> bool:
+    """Does ANYTHING tie this record to a real operating company beyond the name?
+
+    A multi-word name is its own evidence (mis-resolution junk is overwhelmingly
+    a single word: 'Text', 'Built', 'Ballet', 'Cloud'). A single-word name needs
+    one hard anchor: a validated domain, an SEC filing, a funding round, or a
+    named founder. A company with none of those is a WORD that signals got
+    attached to — it may still be real (a brand-new HN launch), so it is never
+    deleted here; it is just not allowed to headline (see scoring.score_all)."""
+    c = db.q1("SELECT name, domain FROM companies WHERE id=?", (company_id,))
+    if not c:
+        return False
+    if c["domain"]:
+        return True
+    name = (c["name"] or "").strip()
+    if len(name.split()) >= 2:
+        return True
+    if db.q1("SELECT id FROM funding_rounds WHERE company_id=? LIMIT 1", (company_id,)):
+        return True
+    if db.q1("SELECT id FROM founders WHERE company_id=? LIMIT 1", (company_id,)):
+        return True
+    if db.q1("""SELECT id FROM signals WHERE company_id=?
+                AND kind IN ('filing','fund_formation') LIMIT 1""", (company_id,)):
+        return True
+    return False
+
 
 def theme_regexes() -> list[tuple[str, str, re.Pattern]]:
     global _theme_res
@@ -56,8 +97,19 @@ def run_filter(verbose: bool = True) -> dict:
         reasons[why] = reasons.get(why, 0) + 1
         db.execute("UPDATE companies SET status='filtered' WHERE id=?", (cid,))
 
+    # Aggregator-domain names are junk wherever they already sit — including rows
+    # a previous run promoted to pipeline/hot before this rule existed. Status
+    # change only; the record and its signals stay, like every other drop here.
+    for r in db.q("""SELECT id, name FROM companies WHERE is_synthetic=0
+                     AND status IN ('pipeline','hot','watchlist')"""):
+        if (r["name"] or "").strip().lower() in AGGREGATOR_DOMAINS:
+            drop(r["id"], "aggregator domain mis-resolved as a company")
+
     for c in candidates:
         cid, name = c["id"], (c["name"] or "")
+        if name.strip().lower() in AGGREGATOR_DOMAINS:
+            drop(cid, "aggregator domain mis-resolved as a company")
+            continue
         if name.lower() in exclude or any(name.lower().startswith(e + " ") for e in exclude):
             drop(cid, "excluded public/megacorp")
             continue

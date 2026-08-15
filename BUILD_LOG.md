@@ -750,3 +750,45 @@ Chronological log of judgment calls made while building. Part of the deliverable
     deployment. It is now two dialect-free queries branched on None.
     `tests/llm_robustness_test.py` (14 checks) pins all four, including the live
     review_queue payload verbatim.
+77. **Why the best-ranked briefs were empty — and the answers were already in the data.**
+    Run 20's top picks included "Text", "VNET" and "ycombinator.com", ranked Deep Dive
+    with no description, no HQ and no profile; meanwhile Remarc — a real HN launch at
+    rank 1 — had no domain although its Show HN signal carried the product URL, and
+    founder coverage sat at 75/347 with the names on SEC's servers, free. Four changes,
+    one theme: evidence the engine already held (or could hold for nothing) now reaches
+    the reader.
+    (a) *Identity corroboration* (`filters.identity_corroborated`): a single-word name
+    with no validated domain, no SEC filing, no funding round and no named founder is a
+    WORD that signals got attached to. Such a company is never deleted — it may be a
+    week-old launch — but `scoring.score_all` holds it at Watch instead of Deep Dive,
+    with the reason stored in its feature vector where a partner can read it. The cap
+    lifts by itself the moment one anchor lands. This also guards two budgets that key
+    on Deep Dive: Apollo credits and strong-model judgement calls, neither of which
+    should be spent proving that "Text" does not exist. Multi-word names corroborate
+    themselves: the junk is overwhelmingly single-word, and the cost of being wrong is
+    only a one-rung demotion, visibly explained.
+    (b) *Aggregator-domain names* ("ycombinator.com") are dropped by the deterministic
+    filter outright — including rows already promoted in earlier runs, which the filter
+    previously never re-examined. A name that IS one of our channels' domains is never a
+    prospect; status change only, signals retained, like every filter drop.
+    (c) *Domains from the company's own evidence* (`domains.from_signals`): before
+    asking Clearbit — which has never heard of a company that launched on Tuesday — the
+    resolver now reads external/website/homepage URLs out of the company's own signals,
+    refuses aggregator and press hosts (a TechCrunch link is where we READ about a
+    company, not where it lives), and validates the same way as ever: the homepage must
+    know the company's name. Remarc-class companies get a domain, then a profile, then a
+    description — the exact chain whose absence made rank-1 briefs empty.
+    (d) *Founder backfill* (`people.backfill_related_persons`): the founder gap was OLD
+    filings, not new ones — everything ingested past the per-run detail cap was stored
+    without its related-persons block, and signals are immutable, so those payloads can
+    never be repaired. The backfill re-fetches primary_doc.xml for filings on live
+    companies whose payload never had a `related_persons` key (an empty list means the
+    filing named nobody — refetching learns nothing), writes people into `founders`
+    (mutable, so no invariant is violated) through the same vehicle-guarded insertion
+    path as the live sync, and records one attempt per signal so nothing is hammered.
+    60 filings per run, newest first: founder coverage now climbs every search instead
+    of being frozen by a cap that no longer exists.
+    `tests/identity_test.py` (18 checks) pins all four, including the exact live shapes:
+    'Text' topping a cohort on velocity, Remarc's domain inside its own launch signal, a
+    filing stored without its people. New version markers: `identity_guard`,
+    `domains_from_signals`, `founder_backfill`.

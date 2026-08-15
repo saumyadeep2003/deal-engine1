@@ -153,6 +153,8 @@ def score_all(judged_results: dict[int, dict] | None = None, verbose: bool = Tru
         for pos, s in enumerate(ranked, start=1):
             db.execute("UPDATE companies SET market_rank=? WHERE id=?", (pos, s["company_id"]))
 
+    from .filters import identity_corroborated
+    demoted = 0
     for s in scored:
         if s["composite"] < floor:
             rec = "Pass"
@@ -162,6 +164,23 @@ def score_all(judged_results: dict[int, dict] | None = None, verbose: bool = Tru
             rec = "Watch"
         else:
             rec = "Pass"
+        # A single-word name with no domain, no filing, no round and no founder is
+        # a word that signals got attached to. Velocity of misattributed signals
+        # was putting these at the TOP of the pipeline ("Text" and "VNET" were
+        # top-picks on run 20) — with no site to profile, their briefs were empty,
+        # at rank 1. Held at Watch, never deleted: a Deep Dive call also spends
+        # Apollo credits and strong-model calls, and both belong to companies that
+        # verifiably exist. The moment ONE anchor lands (domain resolves, filing
+        # arrives, founder named), the cap lifts on its own. A partner's override
+        # is stored separately and still outranks this, like every computed call.
+        if rec == "Deep Dive" and not identity_corroborated(s["company_id"]):
+            rec = "Watch"
+            demoted += 1
+            s["features"]["identity_confidence"] = {
+                "value": 0.0,
+                "reason": "single-word name with no validated domain, SEC filing, "
+                          "funding round or named founder — held at Watch until any "
+                          "one of those corroborates that the company exists"}
         prev = db.q1("SELECT human_override FROM scores WHERE company_id=?"
                      " ORDER BY scored_at DESC LIMIT 1", (s["company_id"],))
         db.insert("scores", {
@@ -183,7 +202,9 @@ def score_all(judged_results: dict[int, dict] | None = None, verbose: bool = Tru
                                    ORDER BY scored_at DESC, id DESC LIMIT 1)
                        GROUP BY recommendation""")
         print(f"  scored {len(scored)} companies across {len(by_cohort)} cohorts: "
-              + ", ".join(f"{r['recommendation']}={r['n']}" for r in recs))
+              + ", ".join(f"{r['recommendation']}={r['n']}" for r in recs)
+              + (f" ({demoted} uncorroborated identit(ies) held at Watch)"
+                 if demoted else ""))
     return {"scored": len(scored), "cohorts": {k: len(v) for k, v in by_cohort.items()}}
 
 
