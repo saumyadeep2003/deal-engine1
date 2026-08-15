@@ -642,3 +642,27 @@ Chronological log of judgment calls made while building. Part of the deliverable
     company), and officers are emitted in the `related_persons` shape so
     `people.sync_from_filings()` ingests them with no new code path — one pipeline for
     people regardless of which registry named them.
+73. **Run 18's briefs and publish steps both died on one line, and the line was mine.** The
+    website adapter stores `customer_logos` as a dict (`{"names": [...], "evidence": ...}`);
+    `profile.source_text` sliced it — `p["customer_logos"][:10]` — which on Render's Python
+    3.12 raises `KeyError: slice(None, 10, None)` (slices became hashable in 3.12, so a dict
+    lookup fails instead of a TypeError). The profiles step survived because backfill
+    swallows per-company errors — reporting "0 written" — while briefs and publish, which
+    reach the same code without that guard, took the whole step down. Two fixes with
+    different jobs: the shape is now read correctly (and defensively), and the public
+    renderers in `hiring`/`profile` no longer raise at all — a decoration on a brief must
+    degrade to the honest gap, not cost a run its remaining 160 briefs. Regression test
+    seeds the exact live payload shape and runs both failing paths.
+74. **Apollo enrichment, scoped to Deep Dive only.** A live test through the user's own
+    Apollo account returned, for one credit, the exact fields this engine stamps "requires
+    Coresignal" — headcount, the 6/12/24-month growth series, a department-level function
+    mix — plus a four-round funding history with investors and news URLs. The adapter
+    enriches ONLY companies whose current call is Deep Dive (partner override included),
+    skips anything enriched within 30 days, and hard-caps credits per run: a data budget
+    spent evenly across 347 companies is a budget spent mostly on companies nobody reads.
+    Nothing new downstream: funding history is emitted as ordinary funding_event signals so
+    the existing ingest path builds rounds and tier-matches investors; headcount and growth
+    land in the same enrichment_cache fields the workbook and briefs already read. Only USD
+    amounts are trusted into amount_usd, and the probe uses the zero-credit auth endpoint —
+    whether a free-plan key reaches the enrich endpoint is answered by the first run, not
+    assumed.

@@ -31,6 +31,7 @@ SOURCE_LABELS = {
     "reddit": "Reading Reddit discussions",
     "careers_pages": "Reading company careers pages",
     "company_news": "Checking the news watch on every tracked company",
+    "apollo_enrich": "Enriching Deep Dive companies via Apollo (headcount, growth, funding)",
     "companies_house": "Reading UK registry officers (Companies House)",
     "company_website": "Visiting company websites",
 }

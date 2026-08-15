@@ -55,7 +55,8 @@ def hiring(company_id: int) -> dict:
         out.update(available=True, open_roles=p.get("open_roles"),
                    function_mix=p.get("function_mix"), observed_at=r["observed_at"],
                    source=p.get("provider"), url=r["url"],
-                   sample_titles=p.get("sample_titles"))
+                   sample_titles=list(p.get("sample_titles") or [])
+                                 if isinstance(p.get("sample_titles"), (list, tuple)) else None)
         # Velocity from the engine's OWN dated observations, not a vendor's claim.
         # One reading is not a trend, and saying so is more useful than a zero.
         prev = next(((rr, pp) for rr, pp in boards[1:]
@@ -80,6 +81,22 @@ def hiring(company_id: int) -> dict:
     return out
 
 
+def _never_raise(fn):
+    """Decorations degrade; they do not take a run step down. The briefs and
+    publish steps of run 18 both died on ONE malformed payload reached through a
+    renderer here — every other company's brief was lost to it."""
+    import functools
+
+    @functools.wraps(fn)
+    def wrapped(*a, **kw):
+        try:
+            return fn(*a, **kw)
+        except Exception:  # noqa: BLE001
+            return None
+    return wrapped
+
+
+@_never_raise
 def summary_line(company_id: int) -> str | None:
     """One line for a brief or a table cell. None when there is nothing to say —
     the caller then prints the honest licence gap instead of a blank."""
@@ -106,6 +123,13 @@ def summary_line(company_id: int) -> str | None:
 def cell(company_id: int) -> str:
     """Workbook cell. Falls back to the licence gap, never to a blank."""
     return summary_line(company_id) or "— (requires Coresignal)"
+
+
+def growth_cell_safe(company_id: int) -> str:
+    try:
+        return growth_cell(company_id)
+    except Exception:  # noqa: BLE001
+        return "— (requires Coresignal)"
 
 
 def growth_cell(company_id: int) -> str:

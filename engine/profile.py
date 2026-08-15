@@ -87,8 +87,14 @@ def source_text(company_id: int) -> tuple[str, str] | None:
             plans = (p["pricing"] or {}).get("plan_names") or []
             if plans:
                 parts.append("Plans offered: " + ", ".join(map(str, plans)))
-        if p.get("customer_logos"):
-            parts.append("Logos shown on the site: " + ", ".join(map(str, p["customer_logos"][:10])))
+        # customer_logos is a DICT ({"names": [...], "evidence": ...}) from the
+        # website adapter — slicing it worked nowhere and crashed loudest on
+        # Python 3.12, where dict[:10] raises KeyError(slice(None, 10, None)).
+        # That one line took down the briefs AND publish steps of a whole run.
+        logos = p.get("customer_logos")
+        names = logos.get("names") if isinstance(logos, dict) else logos
+        if isinstance(names, (list, tuple)) and names:
+            parts.append("Logos shown on the site: " + ", ".join(map(str, list(names)[:10])))
 
     # Apify's crawl, when the token is configured, gives real page prose rather
     # than just the head tags — much better raw material for two sentences.
@@ -110,7 +116,10 @@ def build(company_id: int, force: bool = False) -> dict | None:
         if isinstance(cached, dict):
             return cached
 
-    src = source_text(company_id)
+    try:
+        src = source_text(company_id)
+    except Exception:  # noqa: BLE001 — one malformed payload must not kill a run step
+        return None
     if not src:
         return None
     text, url = src
