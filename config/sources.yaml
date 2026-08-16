@@ -124,6 +124,61 @@ sources:
       AFTER scoring (runner places it there), so it enriches THIS run's Deep
       Dive picks and its cache fields are readable by the briefs that follow."
 
+  # ---- Phase 2 free sources (2026-08-16): the "lagging information" package -
+  # Four additions, all free, all reading data published to be read. Each maps
+  # to a measured coverage gap: yc_companies -> launch-stage discovery with
+  # website+one-liner included; gdelt_news -> corroborating articles beyond the
+  # RSS wire; patents -> the moat criterion from a government database (free
+  # key); podcast_notes -> GP commentary without a paid X tier (metadata here,
+  # full transcripts via scripts/transcribe_podcasts.py run locally).
+
+  - name: yc_companies
+    adapter: engine.adapters.yc_companies.YcCompaniesAdapter
+    interval_minutes: 1440
+    requires_license: false
+    max_batches: 3
+    notes: "Y Combinator's public company directory via yc-oss/api (static JSON,
+      no key). Newest batches only — companies at formation, before any filing,
+      with website and self-written one-liner included. The deterministic filter
+      decides thesis relevance downstream, as with every source."
+
+  - name: gdelt_news
+    adapter: engine.adapters.gdelt_news.GdeltNewsAdapter
+    interval_minutes: 720
+    requires_license: false
+    max_companies: 30
+    max_records: 15
+    notes: "GDELT DOC 2.0 (free, no key): a second news watch over tracked
+      companies covering trade/regional/non-US press the RSS wire misses. Same
+      quoted-name + generic-name-refusal discipline as company_news — a wider
+      net makes wrong attribution MORE dangerous, not less."
+
+  - name: patents
+    adapter: engine.adapters.patents.PatentsAdapter
+    interval_minutes: 10080
+    requires_license: false
+    env_key: PATENTSVIEW_API_KEY
+    max_companies: 25
+    notes: "USPTO PatentsView (free API key, like Companies House): granted
+      patents + inventors for hot/watchlist companies, assignee exact-matched.
+      The moat criterion from a government database instead of press adjectives;
+      inventors recorded as inventors, never promoted to founders."
+
+  - name: podcast_notes
+    adapter: engine.adapters.podcasts.PodcastsAdapter
+    interval_minutes: 1440
+    requires_license: false
+    feeds:
+      - {name: "The Twenty Minute VC", url: "https://thetwentyminutevc.libsyn.com/rss"}
+      - {name: "Invest Like the Best", url: "https://feeds.megaphone.fm/investlikethebest"}
+      - {name: "This Week in Startups", url: "https://feeds.megaphone.fm/thisweekin"}
+      - {name: "The Logan Bartlett Show", url: "https://feeds.megaphone.fm/theloganbartlettshow"}
+      - {name: "No Priors", url: "https://feeds.megaphone.fm/nopriors"}
+    notes: "Podcast RSS show notes scanned for tracked-company mentions (cheap,
+      runs on the free tier). Full transcripts: scripts/transcribe_podcasts.py
+      with faster-whisper, run LOCALLY against DATABASE_URL — transcription does
+      not fit a 512MB instance and never runs there."
+
   # ---- Free, permitted substitutes for the paid vendors --------------------
   # Each of these exists to be read: documented, key-free, and nobody's terms are
   # strained by using them. Together they cover the parts of Coresignal and X that

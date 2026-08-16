@@ -73,7 +73,8 @@ config/sources.yaml. Digest: daily 07:00 IST (`thesis.yaml digest.days`).
 or D12 fails on a missing scheduler log), `tests/gatekeeper_test.py` 22,
 `tests/events_test.py`, `tests/phase1_test.py` 14, `tests/mcp_test.py` 13,
 `tests/judge_verification_test.py` 35, `tests/llm_robustness_test.py` 14,
-`tests/identity_test.py` 18, `tests/fetching_test.py` 14. MCP server (`mcp_server.py`, stdio for Claude Desktop,
+`tests/identity_test.py` 18, `tests/fetching_test.py` 16,
+`tests/run_sequence_test.py` 11, `tests/phase2_test.py` 26. MCP server (`mcp_server.py`, stdio for Claude Desktop,
 13 tools) exists but user **dropped the hybrid plan — API-only**; keep
 `web/api.py` free of mcp imports, `requirements-mcp.txt` separate.
 
@@ -105,10 +106,12 @@ or D12 fails on a missing scheduler log), `tests/gatekeeper_test.py` 22,
 3. **Feedback loop** — ~82 partner_actions rows teach nothing today: weekly
    logistic recalibration of scoring weights + recent overrides few-shot into
    judge prompt.
-4. Phase 2 free sources: USPTO PatentsView (moat/inventors), Whisper podcast
-   transcripts, crt.sh stealth watch, YC/Product Hunt/npm; then Phase 3
-   (change-alerts "open roles -40%", IC memo generator with bear case, weekly
-   self-report).
+4. ~~Phase 2 free sources~~ — **MOSTLY DONE, BUILD_LOG 84**: PatentsView
+   (set free PATENTSVIEW_API_KEY on Render), YC batches, GDELT news sweep,
+   podcast show-notes + local whisper transcript script, ATS 3→6 providers.
+   Still open from the Phase 2 list: crt.sh stealth watch, Product Hunt
+   (needs free dev token), npm downloads. Then Phase 3 (change-alerts
+   "open roles -40%", IC memo generator with bear case, weekly self-report).
 5. Verify latest deploy picked up: news-watch scoping (Pass companies → monthly
    heartbeat only), domain resolver step, Apollo Deep-Dive-only enrichment
    (note: selects on PREVIOUS run's calls — one-run lag, deliberate).

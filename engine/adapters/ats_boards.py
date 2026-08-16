@@ -24,10 +24,18 @@ from ..models import Signal
 from .base import BaseAdapter
 
 # Public, documented, no key. Each returns the company's own open roles.
+# Six providers instead of three (2026-08-16): SmartRecruiters, Workable and
+# Recruitee expose the same kind of public per-company postings endpoint as the
+# original trio. Same slug guesses, same row shape, same "first provider that
+# answers wins" — extending coverage is three URL templates and three parse
+# branches, which is exactly what this table exists to make cheap.
 PROVIDERS = {
     "greenhouse": "https://boards-api.greenhouse.io/v1/boards/{slug}/jobs",
     "lever": "https://api.lever.co/v0/postings/{slug}?mode=json",
     "ashby": "https://api.ashbyhq.com/posting-api/job-board/{slug}",
+    "smartrecruiters": "https://api.smartrecruiters.com/v1/companies/{slug}/postings",
+    "workable": "https://apply.workable.com/api/v1/widget/accounts/{slug}?details=false",
+    "recruitee": "https://{slug}.recruitee.com/api/offers/",
 }
 
 # Title -> function. Deliberately coarse: the useful signal is "they are hiring
@@ -105,6 +113,28 @@ def parse_board(provider: str, body: str) -> list[dict]:
             rows.append({"title": j.get("title"), "location": j.get("location"),
                          "url": j.get("jobUrl"), "posted_at": j.get("publishedAt"),
                          "department": j.get("department")})
+    elif provider == "smartrecruiters":
+        for j in (data or {}).get("content", []) or []:
+            loc = j.get("location") or {}
+            rows.append({"title": j.get("name"),
+                         "location": ", ".join(x for x in (loc.get("city"),
+                                                           loc.get("country")) if x),
+                         "url": (j.get("actions") or {}).get("applyOnWeb")
+                                or j.get("ref"),
+                         "posted_at": j.get("releasedDate"),
+                         "department": (j.get("department") or {}).get("label")})
+    elif provider == "workable":
+        for j in (data or {}).get("jobs", []) or []:
+            rows.append({"title": j.get("title"),
+                         "location": ", ".join(x for x in (j.get("city"),
+                                                           j.get("country")) if x),
+                         "url": j.get("url"), "posted_at": j.get("published_on"),
+                         "department": j.get("department")})
+    elif provider == "recruitee":
+        for j in (data or {}).get("offers", []) or []:
+            rows.append({"title": j.get("title"), "location": j.get("location"),
+                         "url": j.get("careers_url"), "posted_at": j.get("published_at"),
+                         "department": j.get("department")})
     return [r for r in rows if r.get("title")]
 
 
@@ -135,7 +165,10 @@ class AtsBoardsAdapter(BaseAdapter):
                 mix[classify_function(j["title"])] = mix.get(classify_function(j["title"]), 0) + 1
             board_url = {"greenhouse": f"https://boards.greenhouse.io/{slug}",
                          "lever": f"https://jobs.lever.co/{slug}",
-                         "ashby": f"https://jobs.ashbyhq.com/{slug}"}[provider]
+                         "ashby": f"https://jobs.ashbyhq.com/{slug}",
+                         "smartrecruiters": f"https://careers.smartrecruiters.com/{slug}",
+                         "workable": f"https://apply.workable.com/{slug}/",
+                         "recruitee": f"https://{slug}.recruitee.com/"}[provider]
             signals.append(Signal(
                 kind="hiring",
                 observed_at=db.now_iso(),

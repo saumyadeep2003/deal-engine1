@@ -35,6 +35,10 @@ SOURCE_LABELS = {
     "apollo_enrich": "Enriching Deep Dive companies via Apollo (headcount, growth, funding)",
     "companies_house": "Reading UK registry officers (Companies House)",
     "company_website": "Visiting company websites",
+    "yc_companies": "Reading the newest Y Combinator batches",
+    "gdelt_news": "Sweeping global news (GDELT) for tracked companies",
+    "patents": "Checking USPTO patents & inventors (PatentsView)",
+    "podcast_notes": "Scanning VC podcast episodes for tracked companies",
 }
 
 _ACTIVE: dict = {"thread": None}

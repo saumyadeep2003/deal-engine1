@@ -961,3 +961,37 @@ Chronological log of judgment calls made while building. Part of the deliverable
     evidence) on top of a mid-search process is exactly how the box died with BOTH jobs
     lost. An honest "send again when the search finishes" beats an OOM that takes down
     the search too.
+84. **Phase 2 free sources: the five-part "lagging information" package, all free, all
+    reading data published to be read.** Each maps to a measured coverage gap from the
+    live box, and none crosses the ToS line held against Apify/Scrapling/Scrapfly:
+    (a) *ATS boards: three -> six providers.* SmartRecruiters, Workable and Recruitee
+    expose the same public per-company postings endpoints as Greenhouse/Lever/Ashby;
+    the extension is three URL templates and three parse branches in the existing
+    provider table — hiring coverage (4.3%) widens with zero new architecture.
+    (b) *yc_companies* (yc-oss/api, static JSON, no key): the newest 3 batches of YC
+    companies — the exact population the engine is weakest on, pre-filing — arriving
+    WITH a website and a self-written one-liner: the two fields the domain resolver
+    and profile writer work hardest to reconstruct, handed over. The deterministic
+    filter still decides thesis relevance downstream, like every source.
+    (c) *gdelt_news* (GDELT DOC 2.0, free, no key): a second news watch per tracked
+    company over trade/regional/non-US press. It shares company_news's query builder
+    and generic-name refusal BY IMPORT, not by copy — a wider net makes wrong
+    attribution more dangerous, so the bar must be literally the same code.
+    (d) *patents* (USPTO PatentsView, FREE API key — PATENTSVIEW_API_KEY, a signup not
+    a licence): granted patents + inventors for hot/watchlist companies as `patent`
+    signals. The moat criterion finally has a government database behind it instead of
+    press adjectives. Two inherited disciplines: assignee matching is exact-normalised
+    only (a missed patent is recoverable; a stranger's patent in a moat argument is
+    not), and inventors are recorded as inventors — never promoted into `founders`,
+    because the filing said "inventor" and this system records what filings said.
+    (e) *podcast_notes* + scripts/transcribe_podcasts.py: five VC podcast RSS feeds
+    scanned for tracked-company mentions in show notes (cheap, runs on the 512MB box);
+    the local script downloads episodes, transcribes with faster-whisper (SYSTRAN,
+    free, local), and writes mention-context quotes into the SAME database via
+    DATABASE_URL — transcription never runs on the web instance, by design and by
+    documentation. Word-boundary matching so "Scale" never matches inside "scaling".
+    19 free sources now (was 15), all in the discovery group before the filter.
+    tests/phase2_test.py: 26 checks at the parsing seams, mirroring phase1's rule that
+    each source is tested where it can silently go wrong. Five new version markers.
+    Still user-settable, unchanged: REDDIT creds, COMPANIES_HOUSE key — and now
+    PATENTSVIEW_API_KEY joins that list (all three free).

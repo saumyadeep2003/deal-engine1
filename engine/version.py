@@ -87,6 +87,13 @@ def features() -> dict:
         "domains_from_signals": _has("engine.domains", "from_signals"),
         "founder_backfill": _has("engine.people", "backfill_related_persons"),
         "pluggable_fetch_engine": _has("engine.adapters.fetching", "raw_fetch"),
+        "yc_companies": _has("engine.adapters.yc_companies", "YcCompaniesAdapter"),
+        "gdelt_news": _has("engine.adapters.gdelt_news", "GdeltNewsAdapter"),
+        "patents_source": _has("engine.adapters.patents", "PatentsAdapter"),
+        "podcast_notes": _has("engine.adapters.podcasts", "PodcastsAdapter"),
+        "ats_six_providers": (_has("engine.adapters.ats_boards", "PROVIDERS")
+                              and len(__import__("engine.adapters.ats_boards",
+                                  fromlist=["_"]).PROVIDERS) >= 6),
     }
 
 
