@@ -937,3 +937,27 @@ Chronological log of judgment calls made while building. Part of the deliverable
     digest's contents row — the row and its file are now paired by kind.
     Measured on the demo DB: incremental digest right after a previous one = 0/0/0/0
     (the exact complaint); full snapshot = 15 deals, 3 sectors, 15 news, 1 peer move.
+83. **The instance was OOM-killed at 512MB, and the killer was a matrix that grew with
+    every run.** Render: "Ran out of memory (used over 512MB)". Import weight was ruled
+    out by measurement (web.api + scrapling + every run-step module = ~90MB); the
+    culprit was `sectors._tfidf`, which built a DENSE float64 docs x vocab matrix over
+    an UNBOUNDED corpus — every signal ever ingested. At demo scale that is a few MB;
+    at the live box's 3,400+ signals it is ~1500-2500 docs x ~15k terms x 8 bytes
+    ≈ 200-360MB, and `mat / norms` then silently makes a FULL COPY, putting peak near
+    700MB. The step had been inching toward the cliff for weeks — 296s on run 20, killed
+    mid-step on run 21 (masked by "interrupted by restart"), OOM on run 22 — a failure
+    that got one run closer every search because the corpus only grows.
+    Fixes, all measured: the corpus is bounded to a 90-day window (the trend math only
+    compares the last 30 days against the 30 before, so older docs contributed memory
+    and nothing else) and capped at SECTORS_MAX_DOCS=1500 newest — the cap PRINTS when
+    it bites, because a silent cap reads as "covered everything"; the matrix is float32;
+    normalisation is in place (`mat /= norms`), killing the copy; rare terms (df<3) are
+    dropped on large corpora only, so small/test corpora cluster exactly as before.
+    Live-scale rehearsal: 3,000 seeded signals -> docs=1500, matrix 46MB, process peak
+    128MB (was ~700MB); demo + acceptance confirm clusters still form on real-shaped
+    data (6 clusters, test 10 green).
+    Second guard: /api/digest/send now refuses while a search is running — both jobs
+    share one small instance, and stacking a full-digest build (per-deal gatekeeper
+    evidence) on top of a mid-search process is exactly how the box died with BOTH jobs
+    lost. An honest "send again when the search finishes" beats an OOM that takes down
+    the search too.

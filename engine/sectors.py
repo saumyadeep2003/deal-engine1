@@ -13,6 +13,7 @@ Component 15 — on-demand sector scan — lives here too (scan_thesis).
 from __future__ import annotations
 import json
 import math
+import os
 import re
 from collections import Counter
 from datetime import datetime, timedelta, timezone
@@ -72,13 +73,23 @@ def _corpus() -> list[dict]:
     fund_formation signals are part of the corpus, not just news and research."""
     labs = [l.lower() for l in thesis().get("frontier_labs", [])]
     docs = []
+    # Bounded, newest first. This query was unbounded and the corpus grew with
+    # every run until the DENSE tf-idf matrix below OOM-killed a 512MB instance
+    # (docs x vocab x 8 bytes, PLUS a full copy during normalisation: ~2500 docs
+    # was ~700MB peak). The trend math only compares the last 30 days against the
+    # 30 before them, so a 90-day window loses nothing a trend detector could
+    # use; the doc cap is a hard memory guarantee on top, and it is LOGGED when
+    # it bites, because a silent cap reads as "covered everything".
+    max_docs = int(os.environ.get("SECTORS_MAX_DOCS", "1500"))
     rows = db.q("""SELECT s.id, s.kind, s.company_id, s.observed_at, s.url, s.raw,
                           s.payload_json, so.name src
                    FROM signals s JOIN sources so ON s.source_id=so.id
                    WHERE s.kind IN ('research','news','launch','repo','funding_event',
                                     'filing','fund_formation','founder_move',
                                     'customer_win','hiring','commentary','surface')
-                   AND s.fetch_mode != 'synthetic_demo'""")
+                   AND s.fetch_mode != 'synthetic_demo'
+                   AND s.observed_at >= datetime('now', '-90 days')
+                   ORDER BY s.observed_at DESC LIMIT ?""", (max_docs * 2,))
     for r in rows:
         p = json.loads(r["payload_json"])
         if r["kind"] in ("filing", "fund_formation"):
@@ -102,6 +113,10 @@ def _corpus() -> list[dict]:
                      "points": p.get("points") or 0,
                      "frontier_lab": any(l in blob for l in labs),
                      "tokens": _tokens(text)})
+        if len(docs) >= max_docs:
+            print(f"  sector corpus capped at {max_docs} newest docs (of {len(rows)} "
+                  f"candidates in the 90-day window) — raise SECTORS_MAX_DOCS to widen")
+            break
     return docs
 
 
@@ -109,9 +124,13 @@ def _tfidf(docs: list[dict]) -> tuple[np.ndarray, list[str]]:
     df: Counter = Counter()
     for d in docs:
         df.update(set(d["tokens"]))
-    vocab = [w for w, c in df.items() if 2 <= c <= len(docs) * 0.4]
+    df_min = 3 if len(docs) > 400 else 2   # big corpora: rarer terms are noise + memory
+    vocab = [w for w, c in df.items() if df_min <= c <= len(docs) * 0.4]
     idx = {w: i for i, w in enumerate(vocab)}
-    mat = np.zeros((len(docs), len(vocab)))
+    # float32 halves the matrix; normalising IN PLACE avoids the full copy that
+    # `mat / norms` silently makes — together these were the difference between
+    # ~700MB peak and ~40MB on the live corpus.
+    mat = np.zeros((len(docs), len(vocab)), dtype=np.float32)
     for i, d in enumerate(docs):
         tf = Counter(d["tokens"])
         for w, n in tf.items():
@@ -120,7 +139,8 @@ def _tfidf(docs: list[dict]) -> tuple[np.ndarray, list[str]]:
                 mat[i, j] = (1 + math.log(n)) * math.log(len(docs) / df[w])
     norms = np.linalg.norm(mat, axis=1, keepdims=True)
     norms[norms == 0] = 1
-    return mat / norms, vocab
+    mat /= norms
+    return mat, vocab
 
 
 def _greedy_clusters(sim: np.ndarray, threshold: float = 0.18,

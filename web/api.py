@@ -818,6 +818,15 @@ def send_digest_now(background: BackgroundTasks) -> dict:
     _budget_or_429("digest_send")
     if _DIGEST_STATE["running"]:
         return {"ok": True, "started": False, "note": "a digest send is already running"}
+    # One heavy job at a time: search + digest share this instance's small memory
+    # (a 512MB free tier), and running both at once is how it gets OOM-killed —
+    # taking the search down with it. Honest refusal beats a dead instance.
+    from engine import runner as _runner
+    if _runner.is_running():
+        return {"ok": False, "started": False,
+                "note": "a search is running — the digest is built on the same "
+                        "small instance, so send it again when the search finishes "
+                        "(this avoids the out-of-memory crash that kills both)"}
     background.add_task(_send_digest_bg)
     return {"ok": True, "started": True,
             "note": "building + sending in background; poll /api/digest/status"}
