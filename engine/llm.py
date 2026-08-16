@@ -23,6 +23,7 @@ STUB_TEXT = "[STUB: no API key — judgment unavailable]"
 STUB_PROVIDER_DOWN = "[STUB: AI provider did not answer in time — judgment unavailable]"
 STUB_CIRCUIT = ("[STUB: AI provider failing repeatedly — judgment skipped for the rest "
                 "of this search]")
+STUB_EMPTY_ANSWER = "[STUB: the model returned an empty answer — judgment unavailable]"
 
 
 def is_stub(text: str | None) -> bool:
@@ -194,9 +195,20 @@ def _raw_complete(model: str, stage: str, system: str, user: str) -> str:
     cap = (models_config().get("max_tokens_by_stage", {}).get(stage)
            or gen.get("max_tokens", 8192))
     _pace()
-    resp = None
     _tried_fallback = False
     for attempt in range(4):
+        # A reasoning model's chain-of-thought is billed against max_tokens BEFORE
+        # any answer is written. Under the 900-token score cap — measured for the
+        # 8b — inkling spent its entire budget thinking and returned EMPTY content
+        # on nearly every real judgement: 300+ calls on the live box, tokens
+        # logged as success, zero usable answers, coverage frozen at 22 while the
+        # briefs read [STUB]. The strong model alone gets its own, larger ceiling
+        # (never smaller than the stage's); everyone else keeps the measured caps.
+        eff_cap = cap
+        if model == models_config().get("strong_model"):
+            strong_cap = models_config()["limits"].get("strong_model_max_tokens")
+            if strong_cap:
+                eff_cap = max(cap, int(strong_cap))
         try:
             client = _get_client()
             slow = _strong_timeout_for(model)
@@ -206,10 +218,9 @@ def _raw_complete(model: str, stage: str, system: str, user: str) -> str:
                 model=model,
                 temperature=gen.get("temperature", 1.0),
                 top_p=gen.get("top_p", 0.95),
-                max_tokens=cap,
+                max_tokens=eff_cap,
                 messages=[{"role": "system", "content": f"{system}\n\n{EXTRACTION_RULES}"},
                           {"role": "user", "content": user}])
-            break
         except Exception as exc:  # noqa: BLE001 — provider outage must not kill a job
             msg = str(exc)
             # Any failure of the routed model — retired, mistyped, or simply too slow
@@ -239,12 +250,38 @@ def _raw_complete(model: str, stage: str, system: str, user: str) -> str:
                      if circuit_open() else ""))
             _log(stage, model, 0, 0, stub=True)
             return STUB_PROVIDER_DOWN     # a key IS set — say what actually happened
-    circuit_reset()
-    _LAST_MODEL_USED[0] = model          # post-fallback: the model that ANSWERED
-    usage = resp.usage
-    _log(stage, model, usage.prompt_tokens if usage else 0,
-         usage.completion_tokens if usage else 0, stub=False)
-    return resp.choices[0].message.content or ""
+
+        content = resp.choices[0].message.content or ""
+        usage = resp.usage
+        if not content.strip():
+            # The call "succeeded" and the tokens are billed, but there is no
+            # answer — a reasoning model that ran out of budget mid-think, or a
+            # provider hiccup. Logging this as success is how 300 calls produced
+            # nothing and nobody was told. Treat it as the failure it is: once
+            # through the fallback model, then a loud stub with the real hint.
+            _log(stage, model, usage.prompt_tokens if usage else 0,
+                 usage.completion_tokens if usage else 0, stub=True)
+            fallback = models_config().get("fallback_model") or models_config()["tiers"].get("score")
+            if fallback and model != fallback and not _tried_fallback:
+                _tried_fallback = True
+                print(f"  ~ model '{model}' returned an EMPTY answer for stage={stage}"
+                      f" — retrying once with '{fallback}'")
+                model = fallback
+                continue
+            _LAST_ERROR.update({
+                "stage": stage, "model": model, "type": "EmptyAnswer",
+                "message": "the model returned empty content (finish likely 'length')",
+                "hint": ("a reasoning model spent its whole token budget thinking and "
+                         "never wrote the answer — raise limits.strong_model_max_tokens "
+                         "in config/models.yaml"),
+                "at": db.now_iso()})
+            return STUB_EMPTY_ANSWER
+        circuit_reset()
+        _LAST_MODEL_USED[0] = model      # post-fallback: the model that ANSWERED
+        _log(stage, model, usage.prompt_tokens if usage else 0,
+             usage.completion_tokens if usage else 0, stub=False)
+        return content
+    return STUB_PROVIDER_DOWN            # exhausted attempts without an answer
 
 
 def self_test(model_override: str | None = None, hard: bool = False) -> dict:

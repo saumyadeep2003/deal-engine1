@@ -62,6 +62,13 @@ limits:
   # already runs 15 min; the default timeout below still governs every other
   # model, so a dead provider cannot stall the whole search.
   strong_model_timeout_seconds: 150
+  # The strong model's token budget. Inkling is a reasoning model: its chain of
+  # thought is billed against max_tokens BEFORE the answer. Under the 900-token
+  # score cap it spent the whole budget thinking and returned EMPTY content on
+  # nearly every real judgement (300+ calls, tokens logged, zero answers). This
+  # ceiling applies to the strong model only and is never below the stage cap;
+  # the 8b tiers keep the measured per-stage caps above.
+  strong_model_max_tokens: 4096
   # Was 8, when a brief meant a slow flagship-tier call. Judging now runs on an 8b
   # model in ~3s, so the cost that justified the cap is gone — and a cap of 8 left
   # 22 of 30 pipeline companies with no brief at all, which reads as a broken tool

@@ -99,6 +99,89 @@ def main() -> int:
           llm._strong_timeout_for("strong-big") is None,
           "the setting exists to extend patience, never to cut it")
 
+    # ---- 3b. the empty-answer bug: reasoning model runs out of budget ------
+    # Live failure shape: inkling's 300+ score calls returned EMPTY content (its
+    # whole 900-token budget went to reasoning), each was logged as SUCCESS, and
+    # coverage froze at 22 while every Deep Dive brief read [STUB].
+    class _Msg:
+        def __init__(self, content):
+            self.content = content
+
+    class _Choice:
+        def __init__(self, content):
+            self.message = _Msg(content)
+
+    class _Usage:
+        prompt_tokens, completion_tokens = 100, 900
+
+    class _FakeResp:
+        def __init__(self, content):
+            self.choices = [_Choice(content)]
+            self.usage = _Usage()
+
+    class _FakeClient:
+        def __init__(self, script):
+            self.script, self.calls = script, []
+
+        def with_options(self, **kw):
+            return self
+
+        @property
+        def chat(self):
+            outer = self
+
+            class _Comp:
+                class completions:
+                    @staticmethod
+                    def create(**kw):
+                        outer.calls.append({"model": kw["model"],
+                                            "max_tokens": kw["max_tokens"]})
+                        return _FakeResp(outer.script.pop(0))
+            return _Comp
+    CONFIG2 = {"provider": {"api_key_env": "FAKE_LLM_KEY", "base_url": "x"},
+               "tiers": {"score": "fast-8b", "classify": "fast-8b",
+                         "brief": "fast-8b", "chat": "fast-8b"},
+               "fallback_model": "fast-8b", "strong_model": "strong-big",
+               "generation": {"temperature": 1.0, "top_p": 0.95},
+               "max_tokens_by_stage": {"score": 900},
+               "limits": {"request_timeout_seconds": 75,
+                          "strong_model_timeout_seconds": 150,
+                          "strong_model_max_tokens": 4096}}
+    os.environ["FAKE_LLM_KEY"] = "test-key"
+    llm.models_config = lambda: CONFIG2   # noqa: E731
+    llm.MIN_INTERVAL_S = 0.0
+
+    fake = _FakeClient(["a real answer"])
+    llm._client = None
+    llm._get_client = lambda: fake        # noqa: E731
+    out = llm._raw_complete("strong-big", "score", "sys", "user")
+    check("THE LIVE BUG: the strong model gets its own token budget, not the 900 cap",
+          fake.calls[0]["max_tokens"] == 4096 and out == "a real answer",
+          f"max_tokens={fake.calls[0]['max_tokens']}")
+
+    fake = _FakeClient(["8b answer"])
+    llm._get_client = lambda: fake        # noqa: E731
+    llm._raw_complete("fast-8b", "score", "sys", "user")
+    check("the fast tier keeps the measured 900-token stage cap",
+          fake.calls[0]["max_tokens"] == 900, f"max_tokens={fake.calls[0]['max_tokens']}")
+
+    fake = _FakeClient(["", "fallback answer"])   # strong empty -> 8b answers
+    llm._get_client = lambda: fake        # noqa: E731
+    out = llm._raw_complete("strong-big", "score", "sys", "user")
+    check("THE LIVE BUG: an empty answer is NOT success — it falls back to the 8b",
+          out == "fallback answer"
+          and [c["model"] for c in fake.calls] == ["strong-big", "fast-8b"]
+          and llm.last_model_used() == "fast-8b",
+          f"calls={[c['model'] for c in fake.calls]}")
+
+    fake = _FakeClient(["", "   "])               # both empty -> loud stub + hint
+    llm._get_client = lambda: fake        # noqa: E731
+    out = llm._raw_complete("strong-big", "score", "sys", "user")
+    check("empty from both models -> a loud stub naming the real cause",
+          llm.is_stub(out) and "empty answer" in out
+          and "strong_model_max_tokens" in (llm.last_error() or {}).get("hint", ""),
+          out[:60])
+
     # ---- 4. alerts rate-limit query works on both dialects ----------------
     from outputs.alerts import _fire
     fired = _fire("test_rule", None, {"investor": "Test Fund"}, verbose=False)

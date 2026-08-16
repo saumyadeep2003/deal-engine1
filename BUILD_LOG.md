@@ -853,3 +853,33 @@ Chronological log of judgment calls made while building. Part of the deliverable
     is safe because httpx remains the floor. Two checks added to fetching_test: scrapling
     absent -> complete stays true and nothing is "missing"; the optional entry names its
     enable path.
+80. **Run 21 audited end to end: the new machinery works, and it exposed the last silent
+    failure in the judging chain — the strong model was answering with NOTHING.**
+    What run 21 (first search on the new build) proved works: the domains step found 17
+    websites; the founder backfill recovered 173 officer records from old filing XML in
+    one pass (founder coverage 75 -> 119, and briefs now NAME the people — Claris shows
+    its 12 Form D persons); the identity guard held "Cloud" and "Musical" at Watch at the
+    100th percentile; the rejection verifier filed its first honest dispute (QUICKTAKE
+    HEALTH: 8b said no, inkling didn't answer, company kept + queued); scrapling is on
+    (careers/website collects slower but live); the step sequence matches build_steps
+    exactly. Two non-bugs explained: briefs "0 written" was the 30/day cap already spent,
+    and apollo_enrich running before scoring is the designed one-run lag (74) — it
+    enriches the PREVIOUS run's Deep Dive picks, whose list exists; this run's picks
+    don't exist until scoring writes them.
+    The failure: judge took 46 minutes, inkling logged 300+ "successful" score calls —
+    and AI-assessment coverage did not move (22/351), with the newest review_queue rows
+    reading `no parseable JSON found` and a raw of "" — empty string. A reasoning
+    model's chain of thought is billed against max_tokens BEFORE the answer, and the
+    score cap of 900 was measured for the 8b: inkling spent all 900 tokens thinking and
+    the content came back EMPTY. And because a non-exception response was logged as
+    success, no fallback fired, nothing was recorded, and tokens kept burning — the
+    dashboard said the model was answering while every judgement it "wrote" was blank.
+    Two fixes. `limits.strong_model_max_tokens: 4096` — the strong model alone gets a
+    thinking budget, never below the stage cap; the 8b tiers keep their measured caps.
+    And empty content is no longer success: it is logged as a stub, retried once on the
+    fallback model (so a partner still gets the 8b's real answer rather than nothing),
+    and if that is also empty, a loud `[STUB: the model returned an empty answer]` with
+    the actual remedy in last_error's hint. Four new checks in llm_robustness_test with
+    a scripted client. One-run-lag note for the next audit: profiles still wrote 0
+    because the 17 new domains were resolved AFTER the website-visit collect step —
+    those sites are read next run (HANDOFF item 8).
