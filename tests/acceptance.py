@@ -132,17 +132,32 @@ ws2.cell(row=2, column=15).value = old; wb2.save(r'{wb_path}')
                                     for s in stale_tab) or len(stale_tab) > 0,
           f"record retained (status={stale['status']}); Stale tab rows: {stale_tab[:2]}")
 
-    # 8. Digest caps + honest empty sections
-    digests = sorted((OUTPUT_DIR / "digests").glob("*.html"))
-    html = digests[-1].read_text() if digests else ""
-    d = db.q1("SELECT contents_json FROM digests ORDER BY sent_at DESC LIMIT 1")
+    # 8. Digest caps honoured WHEN configured (null = uncapped, the owner's
+    # setting); empty sections stay honestly empty either way
+    from engine.config import thesis as _thesis
+    _caps = _thesis()["digest"]["caps"] or {}
+    # pair the row with ITS file — sent_at ties between a scheduled digest and a
+    # full snapshot made the old pairing compare one digest's HTML against
+    # another digest's contents
+    d = db.q1("SELECT kind, contents_json FROM digests ORDER BY id DESC LIMIT 1")
     contents = json.loads(d["contents_json"]) if d else {}
-    caps_ok = (len(contents.get("deals", [])) <= 5 and len(contents.get("sectors", [])) <= 2
-               and len(contents.get("news", [])) <= 5)
-    check("8 digest respects hard caps; empty sections stay empty", caps_ok
-          and ("Nothing met the bar" in html or all(contents.values())),
-          f"deals={len(contents.get('deals', []))}/5 sectors={len(contents.get('sectors', []))}/2"
-          f" news={len(contents.get('news', []))}/5")
+    pattern = ("digest_full_*.html" if d and d["kind"] == "full_digest"
+               else "digest_????-??-??.html")
+    digests = sorted((OUTPUT_DIR / "digests").glob(pattern))
+    html = digests[-1].read_text() if digests else ""
+
+    def _within(key: str, got: int) -> bool:
+        capv = _caps.get(key)
+        return True if not capv else got <= int(capv)
+
+    caps_ok = (_within("deals", len(contents.get("deals", [])))
+               and _within("sector_calls", len(contents.get("sectors", [])))
+               and _within("news", len(contents.get("news", []))))
+    check("8 digest caps honoured when configured (null=uncapped); empty stays empty",
+          caps_ok and ("Nothing met the bar" in html or all(contents.values())),
+          f"deals={len(contents.get('deals', []))}/{_caps.get('deals') or 'uncapped'}"
+          f" sectors={len(contents.get('sectors', []))}/{_caps.get('sector_calls') or 'uncapped'}"
+          f" news={len(contents.get('news', []))}/{_caps.get('news') or 'uncapped'}")
 
     # 9. All three instant-alert conditions fire + rate-limited (isolated DB copy)
     out = sub("""

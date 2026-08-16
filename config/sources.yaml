@@ -120,7 +120,9 @@ sources:
     max_companies: 25
     notes: "Apollo organization enrichment for Deep Dive companies: measured
       headcount, 6/12-month growth, function mix, and full funding history with
-      investors — the fields previously stamped 'requires Coresignal'."
+      investors — the fields previously stamped 'requires Coresignal'. Runs
+      AFTER scoring (runner places it there), so it enriches THIS run's Deep
+      Dive picks and its cache fields are readable by the briefs that follow."
 
   # ---- Free, permitted substitutes for the paid vendors --------------------
   # Each of these exists to be read: documented, key-free, and nobody's terms are

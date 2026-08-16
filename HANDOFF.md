@@ -115,12 +115,13 @@ or D12 fails on a missing scheduler log), `tests/gatekeeper_test.py` 22,
 6. Surface `unconfirmed_rejection` review rows in the dashboard — they are
    written and queryable but nothing in the UI shows them yet, and a queue
    nobody can see is the same as no queue.
-8. **Close the domains→profiles one-run lag** (found auditing run 21): the
-   domains step resolves websites AFTER the company_website collect step has
-   already run, so a newly-domained company's site is only visited (and its
-   profile only written) on the NEXT search. Options: visit the homepage for
-   newly-resolved domains inside the domains/profiles step, or reorder. Run 21:
-   17 domains found, 0 profiles written — the 17 profile next run.
+8. ~~**Close the domains→profiles one-run lag**~~ — **DONE, BUILD_LOG 81.**
+   Pipeline reordered: careers/website collects now run AFTER the domain
+   resolver (found → read → profiled in one run), apollo_enrich runs AFTER
+   scoring (this run's Deep Dive picks, cache readable by briefs), profiles
+   batch prefers companies with read sites, scrapling retries trimmed.
+   `tests/run_sequence_test.py` pins the order. NOTE the one-run lag notes in
+   items 5/74 are superseded for Apollo.
 7. ~~**From reading run 20 on the live box**~~ — **(a)-(c) DONE, BUILD_LOG 77.**
    Uncorroborated single-word identities are held at Watch (never deleted;
    reason in the feature vector; cap lifts when a domain/filing/round/founder

@@ -209,13 +209,24 @@ def one_liner(company_id: int) -> str | None:
 
 
 def backfill(limit: int = 60, verbose: bool = True) -> int:
-    """Profile the companies a partner is most likely to open next."""
+    """Profile the companies whose sites have actually been read.
+
+    This used to take the top N by percentile alone — and the top of the ranking
+    is dominated by filing-only companies with no website at all, so the batch
+    was spent proving over and over that nothing could be profiled while the
+    companies the website adapter HAD visited sat below the cut. Three runs in a
+    row reported "0 profiles written" with fresh surface signals in the table.
+    Source material first, THEN rank: a profile can only be written from a page
+    the engine has read, so a company with a surface signal outranks a domainless
+    company at the 100th percentile — for this list only."""
     rows = db.q("""SELECT c.id FROM companies c
                    LEFT JOIN scores s ON s.company_id=c.id AND s.id=(
                      SELECT id FROM scores WHERE company_id=c.id
                      ORDER BY scored_at DESC, id DESC LIMIT 1)
                    WHERE c.is_synthetic=0 AND c.status IN ('pipeline','hot','watchlist')
-                   ORDER BY COALESCE(s.percentile, -1) DESC LIMIT ?""", (limit,))
+                   ORDER BY (EXISTS(SELECT 1 FROM signals sg WHERE sg.company_id=c.id
+                                    AND sg.kind='surface')) DESC,
+                            COALESCE(s.percentile, -1) DESC LIMIT ?""", (limit,))
     n = 0
     for r in rows:
         try:

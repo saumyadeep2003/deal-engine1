@@ -44,6 +44,28 @@ def _free_sources() -> list[dict]:
     return [s for s in sources_config()["sources"] if not s.get("requires_license")]
 
 
+# The collect block is not one block. Two sources read pages OF tracked companies
+# (careers, the company's own site) — they can only visit companies whose domain
+# is known, so they must run AFTER the domain resolver or every newly-resolved
+# website waits a whole run to be read (runs 20-22: "N domains found, 0 profiles
+# written", every single time). And Apollo enriches this run's Deep Dive picks —
+# which do not exist until scoring writes them, so before scoring it could only
+# ever act on the previous run's list (the lag a user watching the step panel
+# correctly called out). Discovery sources stay first: they feed everything.
+COMPANY_PAGE_SOURCES = ("careers_pages", "company_website")
+POST_SCORE_SOURCES = ("apollo_enrich",)
+
+
+def _source_groups() -> tuple[list[dict], list[dict], list[dict]]:
+    """(discovery, company_page, post_score) — each in sources.yaml order."""
+    free = _free_sources()
+    discovery = [s for s in free if s["name"] not in COMPANY_PAGE_SOURCES
+                 and s["name"] not in POST_SCORE_SOURCES]
+    pages = [s for s in free if s["name"] in COMPANY_PAGE_SOURCES]
+    post = [s for s in free if s["name"] in POST_SCORE_SOURCES]
+    return discovery, pages, post
+
+
 def plan(kind: str = "full") -> dict:
     """What a search WILL do, before anyone presses the button. Same step list the
     live panel renders, plus per-step estimates from previous runs — so the sources
@@ -65,17 +87,34 @@ def plan(kind: str = "full") -> dict:
 
 
 def build_steps(kind: str) -> list[tuple[str, str]]:
-    steps = [(f"collect:{s['name']}", SOURCE_LABELS.get(s["name"], f"Reading {s['name']}"))
-             for s in _free_sources()]
+    discovery, pages, post_score = _source_groups()
+
+    def collect(srcs):
+        return [(f"collect:{s['name']}", SOURCE_LABELS.get(s["name"], f"Reading {s['name']}"))
+                for s in srcs]
+
+    steps = collect(discovery)
     steps += [
         ("events", "Spotting founder moves & customer wins"),
         ("filter", "Filtering to the fund's focus areas"),
         ("people", "Reading founder & officer names out of SEC filings"),
         ("domains", "Finding official websites for companies that lack one"),
+    ]
+    # company-page sources AFTER the domain resolver: a website found this run is
+    # read this run, and profiled two steps later — no more one-run lag
+    steps += collect(pages)
+    steps += [
         ("profiles", "Reading each company's own website for what they do"),
         ("enrich", "Gathering extra company details"),
         ("judge", "AI assessment of the top companies"),
         ("score", "Ranking everyone against similar companies"),
+    ]
+    # Apollo AFTER scoring: it enriches THIS run's Deep Dive picks, and its
+    # headcount/growth fields land in the cache before the briefs render them.
+    # (Its funding-history signals still become rounds on the next run's filter
+    # pass — building rounds mid-run would mean re-running resolution here.)
+    steps += collect(post_score)
+    steps += [
         ("briefs", "Writing one-page briefs for the best"),
         ("commentary", "Reading what people say about them"),
     ]
@@ -221,15 +260,20 @@ def _execute(run_id: int, kind: str) -> None:
         from .config import thesis
         since = datetime.now(timezone.utc) - timedelta(days=thesis()["filters"]["lookback_days"])
 
-        # -- collect, one source at a time so the dashboard names each --
-        for adapter in ingest.load_adapters([s["name"] for s in _free_sources()]):
-            def collect(st, adapter=adapter):
-                st.progress("connecting…")
-                signals = adapter.safe_fetch(since)
-                stats = ingest.store_signals(adapter.name, signals)
-                st.progress(f"{stats['new']} new item(s), {stats['duplicate']} already known",
-                            items=len(signals))
-            run_step(f"collect:{adapter.name}", collect)
+        discovery, pages, post_score = _source_groups()
+
+        def collect_group(srcs):
+            for adapter in ingest.load_adapters([s["name"] for s in srcs]):
+                def collect(st, adapter=adapter):
+                    st.progress("connecting…")
+                    signals = adapter.safe_fetch(since)
+                    stats = ingest.store_signals(adapter.name, signals)
+                    st.progress(f"{stats['new']} new item(s), {stats['duplicate']} already known",
+                                items=len(signals))
+                run_step(f"collect:{adapter.name}", collect)
+
+        # -- discovery collects, one source at a time so the dashboard names each --
+        collect_group(discovery)
 
         run_step("events", lambda st: st.progress(json.dumps(
             events.derive_events(verbose=False)), items=None))
@@ -249,6 +293,10 @@ def _execute(run_id: int, kind: str) -> None:
         run_step("domains", lambda st: st.progress(
             f"{domains_mod.backfill(verbose=False)} website(s) found and validated for"
             " companies that had none"))
+
+        # -- company-page collects AFTER domains: a site found above is read now --
+        collect_group(pages)
+
         run_step("profiles", lambda st: st.progress(
             f"{profile_mod.backfill(verbose=False)} company profile(s) written from"
             " their own websites"))
@@ -266,6 +314,11 @@ def _execute(run_id: int, kind: str) -> None:
 
         run_step("score", lambda st: st.progress(
             f"{scoring.score_all(judged_box, verbose=False)['scored']} companies ranked"))
+
+        # -- Apollo AFTER scoring: enriches THIS run's Deep Dive picks, and its
+        # headcount/growth land in the cache before the briefs render them --
+        collect_group(post_score)
+
         run_step("briefs", lambda st: st.progress(
             f"{auto_briefs(judged_box, verbose=False)} brief(s) written"))
         run_step("commentary", lambda st: st.progress(

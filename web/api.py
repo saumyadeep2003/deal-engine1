@@ -794,8 +794,14 @@ def _send_digest_bg() -> None:
     from outputs import email_send
     _DIGEST_STATE["running"] = True
     try:
-        path = digest_mod.build_digest(verbose=False)
-        res = email_send.send_digest(path, verbose=False)
+        # The button means "email me the full current picture", not "diff since
+        # the last digest": a manual send minutes after the scheduled one was an
+        # email of honestly-empty sections — correct and useless. full=True is
+        # everything (all hot+watchlist deals, all sector calls, all curated
+        # news), recorded under its own kind so the scheduled digest's
+        # incremental window is untouched.
+        path = digest_mod.build_digest(verbose=False, full=True)
+        res = email_send.send_digest(path, verbose=False, digest_kind="full_digest")
         _DIGEST_STATE["last"] = {"finished": db.now_iso(),
                                  "rendered": str(path.relative_to(ROOT)), **res}
     except Exception as exc:  # noqa: BLE001

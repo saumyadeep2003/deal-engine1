@@ -883,3 +883,57 @@ Chronological log of judgment calls made while building. Part of the deliverable
     a scripted client. One-run-lag note for the next audit: profiles still wrote 0
     because the 17 new domains were resolved AFTER the website-visit collect step —
     those sites are read next run (HANDOFF item 8).
+81. **The pipeline's order was itself a bug, twice — and the user watching the step
+    panel caught one of them before the code review did.** Run 22's timings made the
+    slow spots quantifiable: careers 460s + website 609s (scrapling's default THREE
+    internal attempts stacked under our own retry loop — one dead startup site cost
+    3 x timeout before our layer even saw the failure), enrich ~470s, judge dominated by
+    inkling now actually thinking (30-150s per Deep Dive candidate — the price of real
+    strong-model judgements; JUDGE_TOP_N is the dial if it's too much). But two costs
+    were ORDER, not speed:
+    (a) careers/company_website collected BEFORE the domain resolver ran, so every
+    website found this run was read next run and profiled the run after that. Three
+    consecutive runs printed "N domains found, 0 profiles written" — each step green,
+    the pipeline structurally unable to connect them. The collect block is now split:
+    discovery sources open the run; the two company-page sources run AFTER domains;
+    profiles follow immediately. Found this run -> read this run -> profiled this run.
+    (b) apollo_enrich collected BEFORE scoring — so "enrich the Deep Dive companies"
+    could only ever mean the PREVIOUS run's list, a lag documented in 74 as deliberate
+    and correctly challenged by the user as needless: after the reorder it runs right
+    after score, enriching the list scoring just wrote, with its headcount/growth in
+    the cache before briefs render. (Its funding-history signals still become rounds
+    next run — building rounds mid-run would mean re-running resolution.)
+    Also: profile.backfill picked its 60 companies by percentile alone, and the top of
+    the ranking is filing-only companies with no website — the batch was spent proving
+    nothing could be profiled while visited sites sat below the cut. Companies with a
+    surface signal now outrank a domainless 100th-percentile company for this list
+    only. And scrapling-http is passed retries=1 (defensively — TypeError falls back
+    to its default) so a dead site costs one retry, not three.
+    `tests/run_sequence_test.py` (11 checks) pins the corrected order AND the
+    orderings that were already right, so the next reorder cannot silently break
+    either. The step panel's list comes from the same build_steps, so the dashboard
+    shows the new order on the next deploy.
+82. **"I sent the digest and nothing came." Delivery was fine — the CONTENT model was
+    wrong for a button.** /api/digest/status showed delivered:true with a Resend id, so
+    the email arrived; what arrived was empty sections. Two causes stacked. The digest's
+    window starts where the previous digest ended ("what changed since?"), so pressing
+    send minutes after the scheduled digest produces "Nothing met the bar" in every
+    section — technically honest, useless to the person who pressed the button. And the
+    caps (5 deals / 2 sectors / 5 news) trimmed even a fresh digest to a postcard.
+    The fix separates the two questions the digest can answer. The SCHEDULED digest still
+    asks "what changed?" — incremental window, honest empties. The BUTTON now asks "show
+    me everything": build_digest(full=True) takes every current hot AND watchlist
+    company, all sector calls, every curated news item — no window — and is recorded
+    under kind='full_digest' with its own filename, so it never advances the scheduled
+    digest's incremental window (press it all day; tomorrow's digest still covers
+    everything since yesterday's). send_digest() now marks delivery on the row of the
+    kind it actually sent, because a snapshot stamping its Resend id onto the scheduled
+    digest's record is the same one-record-lies-about-another bug in miniature.
+    Caps are now null in thesis.yaml — null/missing means UNCAPPED, per the owner's
+    explicit request; put a number back on any line to restore that cap. Section
+    headings only print "(cap N)" when a cap exists. Acceptance test 8 rewritten to the
+    new contract (caps honoured WHEN configured), and it caught a latent pairing bug in
+    itself: with same-second timestamps it compared one digest's HTML against another
+    digest's contents row — the row and its file are now paired by kind.
+    Measured on the demo DB: incremental digest right after a previous one = 0/0/0/0
+    (the exact complaint); full snapshot = 15 deals, 3 sectors, 15 news, 1 peer move.

@@ -116,16 +116,21 @@ def send(subject: str, html: str, kind: str = "digest",
         return {"delivered": False, "detail": detail}
 
 
-def send_digest(path: Path | None = None, verbose: bool = True) -> dict:
-    """Send the most recent rendered digest."""
+def send_digest(path: Path | None = None, verbose: bool = True,
+                digest_kind: str = "mwf_digest") -> dict:
+    """Send the most recent rendered digest and mark the RIGHT row delivered —
+    a full snapshot must not stamp its delivery id onto the scheduled digest's
+    record (they are different kinds with different windows)."""
     if path is None:
         files = sorted((OUTPUT_DIR / "digests").glob("digest_*.html"))
         if not files:
             return {"delivered": False, "detail": "no digest rendered yet"}
         path = files[-1]
-    res = send(f"Thirdbase deal digest — {path.stem.replace('digest_', '')}",
+    label = path.stem.replace("digest_full_", "full snapshot ").replace("digest_", "")
+    res = send(f"Thirdbase deal digest — {label}",
                path.read_text(), kind="digest", verbose=verbose)
-    row = db.q1("SELECT id FROM digests WHERE kind='mwf_digest' ORDER BY sent_at DESC LIMIT 1")
+    row = db.q1("SELECT id FROM digests WHERE kind=? ORDER BY sent_at DESC LIMIT 1",
+                (digest_kind,))
     if row:
         db.execute("UPDATE digests SET delivered=?, delivery_detail=? WHERE id=?",
                    (1 if res["delivered"] else 0, res["detail"], row["id"]))

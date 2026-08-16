@@ -240,8 +240,11 @@ alerts:
 digest:
   days: [mon, tue, wed, thu, fri, sat, sun]
   hour_local: 7
+  # null = NO cap (owner's request, 2026-08-16: "everything should be in my
+  # email"). Put a number back on any line to restore that section's cap; the
+  # manual send button always sends the full uncapped snapshot regardless.
   caps:
-    deals: 5
-    sector_calls: 2
-    news: 5
-    peer_moves: 5
+    deals: null
+    sector_calls: null
+    news: null
+    peer_moves: null

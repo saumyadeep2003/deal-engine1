@@ -74,22 +74,44 @@ def _since_last_digest() -> str:
     return row["sent_at"] if row else "1970-01-01"
 
 
-def build_digest(verbose: bool = True) -> Path:
-    caps = thesis()["digest"]["caps"]
-    since = _since_last_digest()
+def build_digest(verbose: bool = True, full: bool = False) -> Path:
+    """Render the digest. Two modes with different questions behind them:
+
+    * scheduled (full=False): "what changed since the last digest?" — the window
+      starts where the previous digest ended, and an unchanged pipeline honestly
+      produces empty sections rather than repeating itself.
+    * on-demand (full=True): "show me everything, now." A partner pressing the
+      send button minutes after the scheduled digest was getting an email of
+      empty sections — technically correct and useless. The button now sends the
+      FULL current picture: every hot and watchlist company, all current sector
+      calls, every curated news item — no window, and recorded under its own
+      kind so it never eats the scheduled digest's incremental window.
+
+    Caps are read from thesis.yaml digest.caps; a null (or missing) cap means
+    UNCAPPED — the owner's explicit request (2026-08-16): everything in the email.
+    """
+    caps = thesis()["digest"]["caps"] or {}
+
+    def cap(key: str) -> int | None:
+        v = caps.get(key)
+        return int(v) if v else None      # null / 0 / missing -> no cap
+
+    NO_CAP = 1_000_000                    # SQL LIMIT when uncapped
+    since = "1970-01-01" if full else _since_last_digest()
     curate_news(verbose=False)
 
-    deals = [c for c in scoring.latest_scores(("hot",))
-             if (c["last_signal_at"] or "") > since]
-    deals = scoring.apply_focus_split(deals, caps["deals"])
+    statuses = ("hot", "watchlist") if full else ("hot",)
+    deals = [c for c in scoring.latest_scores(statuses)
+             if full or (c["last_signal_at"] or "") > since]
+    deals = scoring.apply_focus_split(deals, cap("deals") or len(deals))
 
     sector_calls = [dict(r) for r in db.q(
         "SELECT * FROM sectors_emerging WHERE detected_at > ? ORDER BY ratio DESC LIMIT ?",
-        (since, caps["sector_calls"]))]
+        (since, cap("sector_calls") or NO_CAP))]
 
     news = [dict(r) for r in db.q(
         """SELECT * FROM news_items WHERE why_it_matters IS NOT NULL AND published_at > ?
-           ORDER BY relevance_score DESC LIMIT ?""", (since, caps["news"]))]
+           ORDER BY relevance_score DESC LIMIT ?""", (since, cap("news") or NO_CAP))]
 
     peer_moves = [dict(r) for r in db.q(
         """SELECT pe.*, i.name inv, i.tier, c.name comp, s.url, s.payload_json
@@ -97,7 +119,7 @@ def build_digest(verbose: bool = True) -> Path:
            LEFT JOIN companies c ON pe.company_id=c.id
            LEFT JOIN signals s ON pe.source_signal_id=s.id
            WHERE pe.observed_at > ? AND (i.tier=1 OR pe.is_thesis_shift=1)
-           ORDER BY pe.observed_at DESC LIMIT ?""", (since, caps["peer_moves"]))]
+           ORDER BY pe.observed_at DESC LIMIT ?""", (since, cap("peer_moves") or NO_CAP))]
 
     def section(title, rows, render):
         html = f"<h2>{title}</h2>"
@@ -152,18 +174,29 @@ def build_digest(verbose: bool = True) -> Path:
     .empty{{color:#888;font-style:italic}} small{{color:#666}}
     </style></head><body>
     <h1>Thirdbase deal digest — {db.to_display(db.now_iso(), fmt='%d %b %Y', with_label=False)}</h1>
-    <p><small>Window: since {db.to_display(since, fmt='%d %b %Y', with_label=False)}. Every figure traces to a stored signal;
+    <p><small>{"Full snapshot: the complete current pipeline, not just what changed."
+               if full else
+               "Window: since " + db.to_display(since, fmt='%d %b %Y', with_label=False) + "."}
+    Every figure traces to a stored signal;
     licence-gated fields are marked, judgment fields are stubbed without an API key.</small></p>
-    {section(f"Top new deals (cap {caps['deals']})", deals, deal_html)}
-    {section(f"Sector calls (cap {caps['sector_calls']})", sector_calls, sector_html)}
-    {section(f"Worth reading (cap {caps['news']})", news, news_html)}
+    {section(("All current Deep Dive & Watch companies" if full else "Top new deals")
+             + (f" (cap {cap('deals')})" if cap('deals') else f" ({len(deals)})"), deals, deal_html)}
+    {section("Sector calls" + (f" (cap {cap('sector_calls')})" if cap('sector_calls') else ""),
+             sector_calls, sector_html)}
+    {section("Worth reading" + (f" (cap {cap('news')})" if cap('news') else ""), news, news_html)}
     {section("Peer set activity — tier-1 moves & thesis shifts", peer_moves, peer_html)}
     </body></html>"""
 
     DIGEST_DIR.mkdir(parents=True, exist_ok=True)
-    path = DIGEST_DIR / f"digest_{db.now_iso()[:10]}.html"
+    # a full snapshot is recorded under its own kind and filename, so it never
+    # advances the scheduled digest's incremental window (_since_last_digest
+    # reads kind='mwf_digest' only) — press the button all day, the morning
+    # digest still covers everything since yesterday's morning digest
+    path = DIGEST_DIR / (f"digest_full_{db.now_iso()[:10]}.html" if full
+                         else f"digest_{db.now_iso()[:10]}.html")
     path.write_text(html)
-    db.insert("digests", {"sent_at": db.now_iso(), "kind": "mwf_digest",
+    db.insert("digests", {"sent_at": db.now_iso(),
+                          "kind": "full_digest" if full else "mwf_digest",
                           "contents_json": json.dumps({
                               "deals": [d["name"] for d in deals],
                               "sectors": [s["label"] for s in sector_calls],

@@ -131,9 +131,19 @@ def raw_fetch(url: str, headers: dict, timeout: float = 20.0,
 def _scrapling_fetch(url: str, headers: dict, timeout: float, follow_redirects: bool,
                      used: str) -> tuple[str, int, str, str]:
     if used == "scrapling-http":
-        page = _SCRAPLING["Fetcher"].get(
-            url, headers=headers or None, timeout=timeout,
-            follow_redirects=follow_redirects, stealthy_headers=True)
+        # retries=1: scrapling's default of 3 internal attempts sits UNDER our own
+        # retry loop, so one dead startup site cost 3 x timeout before our layer
+        # even saw the failure — measured on the live box as the website collect
+        # step growing 37s -> 609s. Passed defensively: if this scrapling version
+        # doesn't accept the kwarg, its default stands rather than the call dying.
+        try:
+            page = _SCRAPLING["Fetcher"].get(
+                url, headers=headers or None, timeout=timeout,
+                follow_redirects=follow_redirects, stealthy_headers=True, retries=1)
+        except TypeError:
+            page = _SCRAPLING["Fetcher"].get(
+                url, headers=headers or None, timeout=timeout,
+                follow_redirects=follow_redirects, stealthy_headers=True)
     elif used == "scrapling-stealth":
         # a browser engine ignores our header dict and generates its own; that is
         # the point of stealth, and it is why the engine is recorded distinctly.
