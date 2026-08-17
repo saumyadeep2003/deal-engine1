@@ -40,14 +40,20 @@ def parse_meta_batches(body: str, max_batches: int) -> list[str]:
     drift upstream must read as 'nothing observed', never crash a run."""
     try:
         meta = json.loads(body)
-        batches = meta.get("batches") or []
+        batches = meta.get("batches") or {}
     except (json.JSONDecodeError, AttributeError, TypeError):
         return []
-    slugs = []
-    for b in batches:
-        slug = b.get("slug") if isinstance(b, dict) else None
-        if slug:
-            slugs.append(slug)
+    # The live meta.json keys batches BY slug ({"spring-2026": {name, count, api}});
+    # the first cut assumed a list of {slug: ...} dicts and silently iterated the
+    # KEYS as if they were entries — 0 batches, 0 companies, health green (the
+    # first live run caught it: "0 new item(s)" in 0.3s). Accept both shapes so a
+    # future upstream change back to a list also parses.
+    slugs: list[str] = []
+    if isinstance(batches, dict):
+        slugs = [k for k in batches.keys() if isinstance(k, str)]
+    elif isinstance(batches, list):
+        slugs = [b.get("slug") for b in batches
+                 if isinstance(b, dict) and b.get("slug")]
     # meta lists newest first; trust the order but guard against reversal by
     # sorting season-year slugs when they parse
     def _key(s: str) -> tuple:

@@ -13,7 +13,7 @@ from __future__ import annotations
 import json
 import re
 import xml.etree.ElementTree as ET
-from datetime import datetime
+from datetime import datetime, timedelta
 from urllib.parse import quote
 
 from .. import db, firms
@@ -61,6 +61,14 @@ class EdgarFormDAdapter(BaseAdapter):
     def fetch(self, since: datetime) -> list[Signal]:
         checkpoint = db.checkpoint_get(self.name) or since.date().isoformat()
         end = datetime.utcnow().date().isoformat()
+        # A checkpoint in the future (one malformed date string in one hit is all
+        # it takes, since the advance is a string max) makes the sweep window
+        # empty and the FTS window nonsense — quietly, forever. Clamp and say so.
+        if checkpoint[:10] > end:
+            print(f"  ~ edgar checkpoint was in the FUTURE ({checkpoint}) — reset to "
+                  "a 7-day lookback")
+            checkpoint = (datetime.utcnow().date() - timedelta(days=7)).isoformat()
+            db.checkpoint_set(self.name, checkpoint)
         signals: list[Signal] = []
         seen_adsh: set[str] = set()
         hits: list[dict] = []
@@ -116,7 +124,11 @@ class EdgarFormDAdapter(BaseAdapter):
             adsh = src["adsh"]
             cik = int(src["ciks"][0]) if src.get("ciks") else None
             file_date = src.get("file_date", "")
-            max_date = max(max_date, file_date)
+            # only well-formed YYYY-MM-DD dates may move the checkpoint — a single
+            # compact "20260813" sorts lexically ABOVE every dashed date and would
+            # pin the checkpoint into the future (see the clamp above)
+            if re.match(r"^\d{4}-\d{2}-\d{2}$", file_date or ""):
+                max_date = max(max_date, file_date)
             issuer = re.sub(r"\s*\(CIK \d+\)\s*$", "", (src.get("display_names") or ["?"])[0]).strip()
             index_url = (f"https://www.sec.gov/Archives/edgar/data/{cik}/"
                          f"{adsh.replace('-', '')}/{adsh}-index.htm")
@@ -182,8 +194,13 @@ class EdgarFormDAdapter(BaseAdapter):
         first = max(start, stop - timedelta(days=days - 1))
         out: list[dict] = []
         blocked_days = 0
+        snap_days = 0
+        live_index_days = 0
+        weekday_attempts = 0
         d = first
         while d <= stop:
+            if d.weekday() < 5:
+                weekday_attempts += 1
             ymd = d.strftime("%Y%m%d")
             url = self.INDEX_URL.format(year=d.year, q=(d.month - 1) // 3 + 1, ymd=ymd)
             try:
@@ -202,13 +219,27 @@ class EdgarFormDAdapter(BaseAdapter):
                 continue
             if mode == "live":
                 self._live_seen = True
+                live_index_days += 1
+            else:
+                snap_days += 1
             out.extend(self.parse_form_index(body, d.isoformat()))
             d += timedelta(days=1)
-        if blocked_days and not self._live_seen:
+        # The index has its own live-ness verdict, SEPARATE from FTS. The first
+        # freeze fix required no live answer AT ALL before degrading — and missed
+        # the actual live failure: www.sec.gov (Archives, the .idx files) blocked
+        # while efts.sec.gov (FTS) answered, so _live_seen went true, health went
+        # green, and the index quietly served days-old snapshots forever. New
+        # filings only ENTER through the index; if no weekday index was read
+        # live, discovery is stale no matter how healthy FTS looks.
+        # A live 404 is SEC ANSWERING ("no file today" — weekend, holiday) and
+        # degrades nothing. Only blocked fetches and snapshot-served days mean the
+        # index was not truly read.
+        if weekday_attempts and live_index_days == 0 and (blocked_days or snap_days):
             self._force_degraded = (
-                f"daily index unreachable LIVE for {blocked_days} day(s) — SEC may be "
-                "rate-limiting or blocking this host; any results below are from the "
-                "offline snapshot cache")
+                f"the DAILY FORM INDEX was not read live once ({weekday_attempts} "
+                f"weekday(s) attempted: {blocked_days} blocked, {snap_days} served "
+                "from snapshot cache) — new filings cannot appear until www.sec.gov "
+                "answers this host again; full-text search may still look healthy")
         return out
 
     @staticmethod

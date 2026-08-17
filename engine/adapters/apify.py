@@ -46,6 +46,7 @@ from .. import db
 from ..config import USER_AGENT, thesis
 from ..models import HealthStatus, Signal
 from .base import BaseAdapter
+from ..filters import plausible_company_domain as _plausible_domain
 from .rss_news import AMOUNT_RE, LED_BY_RE, STAGE_RE, clean_company_name, parse_amount
 
 APIFY_API = "https://api.apify.com/v2"
@@ -249,7 +250,12 @@ class ApifyAdapter(BaseAdapter):
             dedupe_key=f"apify:{hashlib.sha1(url.encode()).hexdigest()[:20]}",
             payload=payload,
             company_name=name,
-            company_domain=_domain_of(url) if kind == "funding_event" else None,
+            # the article's host is where we READ about the company, not where the
+            # company lives — news.google.com attached here once poisoned domain
+            # aliases for every Google-News signal after it
+            company_domain=(_domain_of(url)
+                            if kind == "funding_event"
+                            and _plausible_domain(_domain_of(url)) else None),
             fetch_mode=self._last_fetch_mode,
         )
 

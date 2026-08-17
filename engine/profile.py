@@ -103,6 +103,32 @@ def source_text(company_id: int) -> tuple[str, str] | None:
         parts.append(str(crawl)[:4000])
 
     text = "\n".join(x for x in parts if x and x.strip())
+
+    # The site said nothing usable — a JS shell, a bot wall, or no domain at all.
+    # 54 of the 61 sites visited on run 25 landed here, and the brief's "what
+    # they do" stayed blank for the most basic reason there is. But the SAME
+    # discipline that bars press coverage (68: a description must be the
+    # company's OWN words) admits one more source we already hold: the company's
+    # launch listing. A YC one-liner, a Show HN post — the founders wrote those
+    # about themselves. Weaker than a read site (and labelled as such), far
+    # better than a blank.
+    if len(text) < MIN_SOURCE_CHARS:
+        launch = db.q1("""SELECT url, payload_json FROM signals
+                          WHERE company_id=? AND kind='launch'
+                          ORDER BY observed_at DESC LIMIT 1""", (company_id,))
+        if launch:
+            try:
+                lp = json.loads(launch["payload_json"] or "{}")
+            except (json.JSONDecodeError, TypeError):
+                lp = {}
+            launch_text = "\n".join(
+                str(x) for x in (lp.get("title"), lp.get("summary")) if x)
+            if launch_text.strip():
+                combined = (text + "\n" + launch_text).strip()
+                if len(combined) >= MIN_SOURCE_CHARS:
+                    return combined, (launch["url"]
+                                      or "the company's own launch listing")
+
     if len(text) < MIN_SOURCE_CHARS:
         return None
     return text, (url or "the company's website")

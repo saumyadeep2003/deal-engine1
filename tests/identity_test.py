@@ -156,6 +156,33 @@ def main() -> int:
           domains.from_signals(agg_cid, "Presswatch") is None,
           "a TechCrunch URL is where we READ about a company, not where it lives")
 
+    # ==== domains: aggregator hosts can never be a company's website =======
+    from engine import resolution
+    check("plausibility: news.google.com / sec.gov are never company domains",
+          not filters.plausible_company_domain("news.google.com")
+          and not filters.plausible_company_domain("sec.gov")
+          and not filters.plausible_company_domain("www.techcrunch.com")
+          and filters.plausible_company_domain("remara.dev"),
+          "observed live: 'Musical' owned news.ycombinator.com")
+    poisoned = seed_company("Attachtest Co")
+    resolution._attach_domain(poisoned, "news.ycombinator.com", None)
+    check("THE LIVE BUG: resolution refuses to attach an aggregator domain",
+          db.q1("SELECT domain FROM companies WHERE id=?", (poisoned,))["domain"] is None,
+          "one bad attach becomes a domain ALIAS and a misattribution machine")
+    resolution._attach_domain(poisoned, "attachtest.io", None)
+    check("...but a real domain still attaches",
+          db.q1("SELECT domain FROM companies WHERE id=?", (poisoned,))["domain"]
+          == "attachtest.io", "")
+
+    victim = seed_company("Poisoned Biotech Inc", status="hot")
+    db.execute("UPDATE companies SET domain='sec.gov' WHERE id=?", (victim,))
+    db.insert("company_aliases", {"company_id": victim, "alias": "sec.gov",
+                                  "alias_type": "domain", "confidence": 1.0})
+    filters.run_filter(verbose=False)
+    check("the repair sweep NULLs already-poisoned domains and their aliases",
+          db.q1("SELECT domain FROM companies WHERE id=?", (victim,))["domain"] is None
+          and not db.q1("SELECT id FROM company_aliases WHERE alias='sec.gov'"), "")
+
     # ==== founders: recover the never-fetched filing XML ===================
     XML = """<?xml version="1.0"?><edgarSubmission>
       <primaryIssuer><entityName>Filedone</entityName><entityType>Corporation</entityType></primaryIssuer>

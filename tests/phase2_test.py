@@ -41,6 +41,17 @@ def main() -> int:
     slugs = parse_meta_batches(meta, 3)
     check("YC: newest batches win, alumni batches don't",
           slugs == ["winter-2027", "fall-2026", "spring-2026"], str(slugs))
+    # the LIVE meta.json keys batches BY slug (a dict, not a list) — the first
+    # deployed run returned 0 companies in 0.3s because the parser iterated the
+    # keys as if they were entries. Both shapes must parse.
+    meta_dict = json.dumps({"batches": {
+        "winter-2012": {"name": "Winter 2012", "count": 66},
+        "spring-2026": {"name": "Spring 2026", "count": 196},
+        "fall-2026": {"name": "Fall 2026", "count": 14},
+        "winter-2027": {"name": "Winter 2027", "count": 1}}})
+    check("YC: THE LIVE SHAPE — dict-keyed batches parse newest-first",
+          parse_meta_batches(meta_dict, 3) == ["winter-2027", "fall-2026", "spring-2026"],
+          str(parse_meta_batches(meta_dict, 3)))
     check("YC: malformed meta parses to empty, never raises",
           parse_meta_batches("not json", 3) == []
           and parse_meta_batches('{"batches": "wrong"}', 3) == [], "")
@@ -138,6 +149,34 @@ def main() -> int:
     check("podcasts: RSS parses to title/notes/date/audio",
           len(eps) == 1 and eps[0]["audio_url"] == "https://cdn.example/ep12.mp3"
           and eps[0]["published"].startswith("2026-08-15"), str(eps[:1])[:90])
+
+    # ---- 2d-bis. profiles fall back to the company's own launch words ------
+    from engine.adapters.yc_companies import YcCompaniesAdapter  # noqa: F401
+    from engine import profile as profile_mod
+    launch_co = db.insert("companies", {"name": "Remara Robotics", "status": "hot",
+                                        "is_synthetic": 0, "created_at": db.now_iso(),
+                                        "last_signal_at": db.now_iso()})
+    db.insert("signals", {
+        "source_id": 1, "kind": "launch", "observed_at": db.now_iso(),
+        "fetched_at": db.now_iso(), "fetch_mode": "live",
+        "url": "https://www.ycombinator.com/companies/remara",
+        "dedupe_key": "yc:remara", "company_id": launch_co,
+        "payload_json": json.dumps({
+            "title": "Remara Robotics (YC Spring 2026)",
+            "summary": "Autonomous cold-chain picking arms for regional grocery "
+                       "distributors — retrofit into existing warehouses in a weekend."}),
+        "raw": "Remara Robotics — autonomous picking arms"})
+    src_txt = profile_mod.source_text(launch_co)
+    check("THE FIX: a company with no readable site gets its launch-listing words",
+          src_txt is not None and "cold-chain" in src_txt[0]
+          and "ycombinator.com" in src_txt[1],
+          "the founders wrote that about themselves — weaker than a site, better "
+          "than the blank 54 of 61 briefs showed")
+    no_evidence = db.insert("companies", {"name": "Silent Co", "status": "hot",
+                                          "is_synthetic": 0, "created_at": db.now_iso(),
+                                          "last_signal_at": db.now_iso()})
+    check("...and a company with neither site nor launch stays an honest None",
+          profile_mod.source_text(no_evidence) is None, "no invented descriptions")
 
     # ---- 2e. ATS: three new providers --------------------------------------
     from engine.adapters.ats_boards import PROVIDERS, parse_board

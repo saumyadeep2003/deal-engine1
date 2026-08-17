@@ -121,6 +121,29 @@ def main() -> int:
     check("a 404 on index days (weekend) does not degrade health",
           h["health"] == "ok", h["health"])
 
+    # ==== 3b. THE SECOND FREEZE: FTS live, index stale -> still degraded ==
+    # The first fix required no live answer AT ALL; the real outage was
+    # www.sec.gov (index) blocked while efts.sec.gov (FTS) answered — health
+    # went green and discovery silently froze anyway.
+    db.checkpoint_set("edgar_formd", "2026-08-12")
+    a = make_adapter({"daily-index": ("snap", INDEX_FRESH),   # index from stale cache
+                      "efts.sec.gov": ("live", '{"hits": {"hits": []}}')})
+    a.safe_fetch(since)
+    h = db.q1("SELECT health, last_error FROM sources WHERE name='edgar_formd'")
+    check("FTS answering live does NOT excuse a snapshot-served index",
+          h["health"] == "degraded" and "FORM INDEX" in (h["last_error"] or ""),
+          str(h["last_error"])[:80])
+
+    # ==== 3c. a future checkpoint clamps itself ===========================
+    db.checkpoint_set("edgar_formd", "20991231")
+    a = make_adapter({"daily-index": ("live", INDEX_FRESH),
+                      "efts.sec.gov": ("live", '{"hits": {"hits": []}}')})
+    a.safe_fetch(since)
+    cp = db.checkpoint_get("edgar_formd")
+    check("a checkpoint in the future resets to a 7-day lookback instead of freezing",
+          cp is not None and cp[:4] == "2026" and cp <= TODAY.isoformat(),
+          f"checkpoint={cp}")
+
     # ==== 4. the step panel says it out loud ==============================
     from engine.runner import collect_detail
 

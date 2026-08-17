@@ -25,6 +25,23 @@ AGGREGATOR_DOMAINS = {
 }
 
 
+def plausible_company_domain(dom: str | None) -> bool:
+    """Could this domain be a company's OWN website? An aggregator/press host can
+    never be: news.google.com attached as a startup's domain doesn't just read
+    wrong — it becomes a domain ALIAS, and every later signal from that host
+    resolves onto that one company. One bad attach becomes a misattribution
+    machine (observed live: 'Musical' owned news.ycombinator.com, a biotech owned
+    sec.gov). Checked at every layer that writes a domain, because the cheapest
+    place to stop a poisoned value is before it is stored."""
+    if not dom:
+        return False
+    d = dom.strip().lower()
+    d = d[4:] if d.startswith("www.") else d
+    if d in AGGREGATOR_DOMAINS:
+        return False
+    return not any(d.endswith("." + a) for a in AGGREGATOR_DOMAINS)
+
+
 def identity_corroborated(company_id: int) -> bool:
     """Does ANYTHING tie this record to a real operating company beyond the name?
 
@@ -104,6 +121,23 @@ def run_filter(verbose: bool = True) -> dict:
                      AND status IN ('pipeline','hot','watchlist')"""):
         if (r["name"] or "").strip().lower() in AGGREGATOR_DOMAINS:
             drop(r["id"], "aggregator domain mis-resolved as a company")
+
+    # REPAIR: domains already poisoned before the write-side gates existed. A
+    # company whose "website" is news.google.com / sec.gov corrupts everything
+    # downstream of the domain field — corroboration, the site scraper, and
+    # (worst) domain-alias resolution, which glues every future signal from that
+    # host onto this one company. Null the field, remove the alias; the real
+    # domain resolver gets another clean shot next step.
+    repaired = 0
+    for r in db.q("SELECT id, name, domain FROM companies WHERE domain IS NOT NULL"):
+        if not plausible_company_domain(r["domain"]):
+            db.execute("UPDATE companies SET domain=NULL WHERE id=?", (r["id"],))
+            db.execute("DELETE FROM company_aliases WHERE company_id=? AND"
+                       " alias_type='domain' AND alias=?", (r["id"], r["domain"]))
+            repaired += 1
+    if repaired:
+        print(f"  filter: NULLed {repaired} aggregator/press domain(s) wrongly attached "
+              "as company websites (and their aliases)")
 
     for c in candidates:
         cid, name = c["id"], (c["name"] or "")

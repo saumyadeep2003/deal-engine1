@@ -1051,3 +1051,44 @@ Chronological log of judgment calls made while building. Part of the deliverable
     tests/self_heal_test.py (10 checks) drives the real run-step machinery with
     scripted steps: flaky-once heals green, deterministic captures both attempts,
     report content pinned. Version marker: self_heal_and_error_reports.
+87. **Run 25 audited: the reordered pipeline works, and it surfaced three precise bugs —
+    including a domain-poisoning loop that was quietly corrupting attribution.**
+    What run 25 proved: the new order executed (domains -> careers -> website ->
+    profiles), 61 sites visited, profiles wrote for the first time in five runs (6),
+    founder coverage hit 71%, GDELT and podcasts collected. What it exposed:
+    (a) *yc_companies returned 0 in 0.3s with green health.* The live meta.json keys
+    batches BY SLUG (a dict); the parser expected a list and iterated the keys as if
+    they were entries — zero batches, zero companies, no error. Both shapes now parse
+    (dict keys ARE the slugs), pinned against the exact live structure.
+    (b) *Only 6 profiles from 61 visited sites* — most startup pages give a JS shell to
+    a no-browser fetcher, so source_text came up under MIN_SOURCE_CHARS and the brief's
+    "what they do" stayed blank for the most basic reason there is. The discipline that
+    bars press coverage (68: descriptions must be the company's OWN words) admits one
+    more source already in the database: the company's launch listing. A YC one-liner
+    or a Show HN post is written by the founders about themselves; source_text now
+    falls back to it (URL provenance kept, honest None preserved when neither exists).
+    With the YC fix landing hundreds of launch signals, this is the description path
+    for exactly the companies whose sites can't be read.
+    (c) *Companies owned aggregator domains*: 'Musical' had news.ycombinator.com as its
+    website, a biotech had sec.gov, a robotics company news.google.com. Source: the
+    Apify adapter attached the funding ARTICLE's host as the company's domain. The rot
+    compounds: an attached domain becomes a domain ALIAS, and resolution's first match
+    rule then glues EVERY future signal from that host onto that one company — one bad
+    attach becomes a misattribution machine, and it also fabricates identity
+    corroboration for junk names. Three layers, because a poisoned value is cheapest to
+    stop before it is stored: `filters.plausible_company_domain` (aggregator hosts are
+    never a company's own site); `resolution._attach_domain` gates every attach with
+    it; the Apify source is fixed; and `run_filter` repairs history — NULLs poisoned
+    domains and deletes their aliases, logged, so the real resolver gets a clean shot.
+    (d) *EDGAR, the second freeze*: run 25's "0 new, 279 known" carried NO snapshot
+    warning — because FTS (efts.sec.gov) answers live while the daily index
+    (www.sec.gov) is blocked, and the first fix only degraded when NOTHING was live.
+    The index now has its own live-ness verdict: if no weekday index file was read
+    live (blocked or snapshot-served; a live 404 stays a weekend), health degrades
+    with "the DAILY FORM INDEX was not read live once — new filings cannot appear
+    until www.sec.gov answers this host". Plus: a future-dated checkpoint (one
+    compact "20260813" string-maxes above every dashed date) now clamps itself to a
+    7-day lookback, only well-formed dates may advance the checkpoint, and
+    /api/connections exposes each source's checkpoint and last_error — the two facts
+    that turn the next freeze diagnosis from guesswork into a read.
+    Tests: identity 18->22, phase2 26->29, edgar_freshness 8->10. All 13 suites green.

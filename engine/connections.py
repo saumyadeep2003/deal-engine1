@@ -96,7 +96,8 @@ def _sources() -> list[dict]:
     out = []
     for src in sources_config()["sources"]:
         name = src["name"]
-        row = db.q1("SELECT health, last_ok_at, error_count FROM sources WHERE name=?", (name,))
+        row = db.q1("SELECT health, last_ok_at, error_count, last_error FROM sources"
+                    " WHERE name=?", (name,))
         out.append({
             "id": f"source:{name}", "group": "sources", "label": name,
             "detail": (f"licensed — {src.get('license_vendor')}"
@@ -106,6 +107,11 @@ def _sources() -> list[dict]:
             "configured": not src.get("requires_license"),
             "last_ok_at": row["last_ok_at"] if row else None,
             "health": row["health"] if row else "unknown",
+            # a degraded source's own words, and (for checkpointed sources) how far
+            # its window has advanced — the two facts that turned the EDGAR-freeze
+            # diagnosis from guesswork into a read
+            "last_error": (row["last_error"] or None) if row else None,
+            "checkpoint": db.checkpoint_get(name),
         })
     return out
 

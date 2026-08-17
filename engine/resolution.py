@@ -68,6 +68,9 @@ def _is_synthetic_name(name: str) -> bool:
 def _attach_domain(company_id: int, domain: str | None, signal_id: int | None) -> None:
     if not domain:
         return
+    from .filters import plausible_company_domain
+    if not plausible_company_domain(domain):
+        return   # an aggregator/press host is never a company's own website
     row = db.q1("SELECT domain FROM companies WHERE id=?", (company_id,))
     if row and not row["domain"]:
         clash = db.q1("SELECT id FROM companies WHERE domain=?", (domain,))
