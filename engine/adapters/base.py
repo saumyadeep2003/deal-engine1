@@ -220,10 +220,21 @@ class BaseAdapter:
                            + ("" if ok else f" — expected '{expect}' in the response"))}
 
     def safe_fetch(self, since: datetime) -> list[Signal]:
-        """fetch() wrapped with heartbeat + error classification."""
+        """fetch() wrapped with heartbeat + error classification.
+
+        An adapter that RETURNED signals but wants its health degraded anyway
+        sets self._force_degraded to a reason string — the case where every
+        response came from the offline snapshot cache: data flows, but it is
+        stale, and a green light over stale data is how EDGAR sat frozen for
+        days reading as healthy."""
+        self._force_degraded = None
         try:
             signals = self.fetch(since)
-            self.record_ok()
+            if getattr(self, "_force_degraded", None):
+                self.record_error(RuntimeError(self._force_degraded))
+                print(f"  ! {self.name}: DEGRADED — {self._force_degraded}")
+            else:
+                self.record_ok()
             return signals
         except Exception as exc:  # noqa: BLE001
             self.record_error(exc)

@@ -74,7 +74,8 @@ or D12 fails on a missing scheduler log), `tests/gatekeeper_test.py` 22,
 `tests/events_test.py`, `tests/phase1_test.py` 14, `tests/mcp_test.py` 13,
 `tests/judge_verification_test.py` 35, `tests/llm_robustness_test.py` 14,
 `tests/identity_test.py` 18, `tests/fetching_test.py` 16,
-`tests/run_sequence_test.py` 11, `tests/phase2_test.py` 26. MCP server (`mcp_server.py`, stdio for Claude Desktop,
+`tests/run_sequence_test.py` 11, `tests/phase2_test.py` 26,
+`tests/edgar_freshness_test.py` 8, `tests/self_heal_test.py` 10. MCP server (`mcp_server.py`, stdio for Claude Desktop,
 13 tools) exists but user **dropped the hybrid plan — API-only**; keep
 `web/api.py` free of mcp imports, `requirements-mcp.txt` separate.
 

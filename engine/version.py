@@ -94,6 +94,7 @@ def features() -> dict:
         "ats_six_providers": (_has("engine.adapters.ats_boards", "PROVIDERS")
                               and len(__import__("engine.adapters.ats_boards",
                                   fromlist=["_"]).PROVIDERS) >= 6),
+        "self_heal_and_error_reports": _has("engine.runner", "build_error_report"),
     }
 
 

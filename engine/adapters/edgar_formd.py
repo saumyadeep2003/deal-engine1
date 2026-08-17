@@ -64,6 +64,13 @@ class EdgarFormDAdapter(BaseAdapter):
         signals: list[Signal] = []
         seen_adsh: set[str] = set()
         hits: list[dict] = []
+        # Did ANY request this run get a live answer from SEC? The snapshot-cache
+        # fallback is what kept demo boxes honest offline — and on the live box it
+        # became a perfect freeze: SEC stops answering, every URL serves its stale
+        # snapshot, "0 new / 279 already known" every run, health green, checkpoint
+        # pinned, for days. Live-ness is now tracked explicitly and consulted
+        # before the checkpoint moves or health is called ok.
+        self._live_seen = False
 
         # -- 1. THE INDEX SWEEP: every Form D, not keyword hits ----------------
         # For its first months this adapter only ran twelve keyword searches
@@ -88,6 +95,8 @@ class EdgarFormDAdapter(BaseAdapter):
                 body, mode = self.http_get(url)
                 data = json.loads(body)
                 any_success = True
+                if mode == "live":
+                    self._live_seen = True
             except Exception as exc:  # noqa: BLE001
                 self.record_error(exc)
                 continue
@@ -136,8 +145,17 @@ class EdgarFormDAdapter(BaseAdapter):
                 payload=payload, company_name=None if kind == "fund_formation" else issuer,
                 fetch_mode=h["mode"]))
 
-        if any_success:
-            db.checkpoint_set(self.name, max_date)  # advances only on success
+        if any_success and self._live_seen:
+            db.checkpoint_set(self.name, max_date)  # advances only on a LIVE success
+        elif any_success:
+            # Everything this run "found" came from the offline snapshot cache.
+            # Do NOT advance the checkpoint (no real window was read, so nothing
+            # may be skipped when SEC answers again) and do NOT let the health
+            # row say ok — this exact state ran for days reading as healthy.
+            self._force_degraded = (
+                "every EDGAR response this run came from the offline snapshot cache — "
+                "SEC did not answer live once (rate-limited or blocked?); checkpoint "
+                "held, results are stale")
         elif not signals:
             raise RuntimeError("EDGAR full-text search unreachable and no snapshot available")
         return signals
@@ -163,17 +181,34 @@ class EdgarFormDAdapter(BaseAdapter):
         days = int(self.cfg.get("max_index_days", self.max_index_days))
         first = max(start, stop - timedelta(days=days - 1))
         out: list[dict] = []
+        blocked_days = 0
         d = first
         while d <= stop:
             ymd = d.strftime("%Y%m%d")
             url = self.INDEX_URL.format(year=d.year, q=(d.month - 1) // 3 + 1, ymd=ymd)
             try:
-                body, _ = self.http_get(url, retries=0)
-            except Exception:  # noqa: BLE001 — no file on a non-trading day
+                body, mode = self.http_get(url, retries=0)
+            except Exception as exc:  # noqa: BLE001
+                # A 404 is a calendar fact (weekend/holiday: no index file). ANY
+                # OTHER failure is SEC not answering — a 403 here is how "the
+                # engine found nothing new for four days" happens with every
+                # health light green, so it must be counted and said out loud.
+                import httpx as _httpx
+                is_404 = (isinstance(exc, _httpx.HTTPStatusError)
+                          and exc.response.status_code == 404)
+                if not is_404:
+                    blocked_days += 1
                 d += timedelta(days=1)
                 continue
+            if mode == "live":
+                self._live_seen = True
             out.extend(self.parse_form_index(body, d.isoformat()))
             d += timedelta(days=1)
+        if blocked_days and not self._live_seen:
+            self._force_degraded = (
+                f"daily index unreachable LIVE for {blocked_days} day(s) — SEC may be "
+                "rate-limiting or blocking this host; any results below are from the "
+                "offline snapshot cache")
         return out
 
     @staticmethod

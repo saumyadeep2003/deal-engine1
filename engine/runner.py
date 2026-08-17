@@ -239,23 +239,180 @@ class _Step:
         return False   # never swallow — _execute decides what a failure means
 
 
+def collect_detail(stats: dict, signals: list) -> str:
+    """The step-panel line for one collect. Items served from the offline
+    snapshot cache are counted OUT LOUD: "0 new, 279 already known" with every
+    item quietly coming from stale snapshots is exactly how EDGAR sat frozen for
+    days while reading as healthy — the panel line was true and useless."""
+    n_snap = sum(1 for x in signals
+                 if getattr(x, "fetch_mode", "live") == "cached_snapshot")
+    line = f"{stats['new']} new item(s), {stats['duplicate']} already known"
+    if n_snap:
+        line += (f" — ⚠ {n_snap} of {len(signals)} served from OFFLINE SNAPSHOT "
+                 "(live fetch failing; see Source Health)")
+    return line
+
+
+def _keepalive_loop(stop: threading.Event) -> None:
+    """Ping our own /healthz while a search runs. Render's free tier spins the
+    service down after ~15 minutes without inbound HTTP — and a running search
+    generates none once the partner closes the dashboard, so runs 22/23/24 all
+    died 'interrupted by restart' with nobody watching. A self-request through
+    the public URL counts as traffic and keeps the instance alive exactly as
+    long as a run is in flight; it does nothing when PUBLIC_BASE_URL is unset
+    (local runs need no keeping alive)."""
+    import os
+
+    import httpx as _httpx
+
+    from .config import PUBLIC_BASE_URL
+    url = (PUBLIC_BASE_URL or "").rstrip("/")
+    if not url.startswith("http") or not os.environ.get("DEAL_ENGINE_HOSTED"):
+        return
+    while not stop.wait(240):
+        try:
+            _httpx.get(f"{url}/healthz", timeout=10)
+        except Exception:  # noqa: BLE001 — a failed ping must never hurt the run
+            pass
+
+
+def build_error_report(run_id: int, failed: list[dict], healed: list[dict]) -> str:
+    """A run's failures, written for the person who will paste them to Claude.
+
+    The redeploy loop this feeds: run fails a step -> this report reaches the
+    partner (review queue + email) -> they paste it into a Cowork/Claude session
+    with the repo connected -> Claude reads HANDOFF.md + this report, fixes the
+    code, ships -> partner pushes -> Render redeploys. Everything Claude needs to
+    start is IN the report — commit, step, both attempts' errors, traceback —
+    because a report that makes the human go log-spelunking first is friction
+    that stops the loop from happening."""
+    from . import version
+    lines = [
+        f"# Search {run_id} — error report",
+        "",
+        f"- build commit: `{version.commit() or 'unknown'}`",
+        f"- generated: {db.now_iso()}",
+        f"- self-healed on retry (no action needed): "
+        f"{', '.join(h['key'] for h in healed) if healed else 'none'}",
+        f"- FAILED after retry: {', '.join(f['key'] for f in failed) if failed else 'none'}",
+        "",
+    ]
+    labels = dict(build_steps("full"))
+    for f in failed:
+        lines += [f"## step `{f['key']}` — {labels.get(f['key'], f['key'])}", ""]
+        if f.get("retried"):
+            lines += [f"- first attempt: {f.get('first_error')}",
+                      f"- retry: {f['error']}"
+                      + (" — IDENTICAL failure, so this is deterministic, not transient"
+                         if f.get("identical") else " — different error on retry"), ""]
+        else:
+            lines += [f"- error: {f['error']}",
+                      f"- {f.get('note', '')}", ""]
+        lines += ["```", (f.get("traceback") or "").strip(), "```", ""]
+    lines += [
+        "---",
+        "**To fix:** open a Claude (Cowork) session with the `deal-engine-deploy` "
+        "folder connected and paste this whole report with: "
+        "\"read HANDOFF.md in deal-engine, then fix this error report\". "
+        "After Claude ships the fix, `git add -A && git commit && git push` and "
+        "Render redeploys.",
+    ]
+    return "\n".join(lines)
+
+
+def report_run_errors(run_id: int, failed: list[dict], healed: list[dict]) -> None:
+    """Store the report where the dashboard reads, and email it if email works."""
+    report = build_error_report(run_id, failed, healed)
+    db.insert("review_queue", {"kind": "run_error_report", "created_at": db.now_iso(),
+                               "payload_json": json.dumps({
+                                   "run_id": run_id,
+                                   "failed_steps": [f["key"] for f in failed],
+                                   "healed_steps": [h["key"] for h in healed],
+                                   "report_markdown": report})})
+    if failed:
+        print(f"  ! {len(failed)} step(s) failed after retry — Claude-ready error "
+              "report stored (review queue) "
+              + ("and emailed" if _email_report(run_id, failed, report) else
+                 "(email not configured/failed — report is in the review queue)"))
+    elif healed:
+        print(f"  ~ {len(healed)} step(s) self-healed on retry — noted in review queue")
+
+
+def _email_report(run_id: int, failed: list[dict], report_md: str) -> bool:
+    try:
+        from outputs import email_send
+        if not email_send.configured():
+            return False
+        body = report_md.replace("\n", "<br>\n")
+        html = (f"<html><body style='font-family:ui-monospace,monospace;font-size:13px'>"
+                f"{body}</body></html>")
+        res = email_send.send(
+            f"deal engine — search {run_id}: {len(failed)} step(s) failed "
+            "(Claude-ready report inside)", html, kind="error_report", verbose=False)
+        return bool(res.get("delivered"))
+    except Exception:  # noqa: BLE001
+        return False
+
+
 def _execute(run_id: int, kind: str) -> None:
     from . import commentary, enrichment, events, filters, ingest, judge, scoring, sectors
     from . import peers as peers_mod
     from .briefs import auto_briefs
     t0 = time.time()
-    failed_steps: list[str] = []
+    failed_steps: list[dict] = []
+    healed_steps: list[dict] = []
+    _ka_stop = threading.Event()
+    threading.Thread(target=_keepalive_loop, args=(_ka_stop,), daemon=True,
+                     name=f"keepalive-{run_id}").start()
 
     def run_step(key, fn):
         _check_cancel()                       # stop cleanly between steps
+        t_start = time.time()
         try:
             with _Step(run_id, key) as st:
                 return fn(st)
         except RunCancelled:
             raise                             # cancellation is not a step failure
-        except Exception:  # noqa: BLE001 — one broken step must not kill the search
-            failed_steps.append(key)
+        except Exception as exc:  # noqa: BLE001 — one broken step must not kill the search
             traceback.print_exc()
+            first_tb = traceback.format_exc()
+            # SELF-HEAL, ONCE: much of what kills a step is transient — a provider
+            # blinking, a rate limit, a dropped connection — and a single retry
+            # after a pause fixes it with no human involved. Only steps that
+            # failed FAST are retried: a step that died 40 minutes in has done
+            # real work and real spend, and doubling that on a guess is not
+            # healing. Deterministic bugs fail again in seconds, which is exactly
+            # what the error report needs to say ("failed twice, identically").
+            if time.time() - t_start < 120:
+                _sleep_between_attempts = 8
+                print(f"  ~ step '{key}' failed fast ({type(exc).__name__}) — "
+                      f"retrying once in {_sleep_between_attempts}s")
+                time.sleep(_sleep_between_attempts)
+                _check_cancel()
+                try:
+                    db.execute("UPDATE run_steps SET status='pending', detail='retrying "
+                               "after a failure…' WHERE run_id=? AND key=?", (run_id, key))
+                    with _Step(run_id, key) as st:
+                        out = fn(st)
+                    print(f"  ~ step '{key}' succeeded on retry — transient, self-healed")
+                    healed_steps.append({"key": key, "error": f"{type(exc).__name__}: {exc}"})
+                    return out
+                except RunCancelled:
+                    raise
+                except Exception as exc2:  # noqa: BLE001
+                    traceback.print_exc()
+                    failed_steps.append({
+                        "key": key, "error": f"{type(exc2).__name__}: {str(exc2)[:300]}",
+                        "traceback": traceback.format_exc()[-2500:],
+                        "first_error": f"{type(exc).__name__}: {str(exc)[:200]}",
+                        "retried": True,
+                        "identical": type(exc2) is type(exc) and str(exc2) == str(exc)})
+                    return None
+            failed_steps.append({
+                "key": key, "error": f"{type(exc).__name__}: {str(exc)[:300]}",
+                "traceback": first_tb[-2500:], "retried": False,
+                "note": "not retried — the step had run long enough that repeating it "
+                        "would repeat real work and spend"})
             return None
 
     try:
@@ -272,8 +429,7 @@ def _execute(run_id: int, kind: str) -> None:
                     st.progress("connecting…")
                     signals = adapter.safe_fetch(since)
                     stats = ingest.store_signals(adapter.name, signals)
-                    st.progress(f"{stats['new']} new item(s), {stats['duplicate']} already known",
-                                items=len(signals))
+                    st.progress(collect_detail(stats, signals), items=len(signals))
                 run_step(f"collect:{adapter.name}", collect)
 
         # -- discovery collects, one source at a time so the dashboard names each --
@@ -352,12 +508,22 @@ def _execute(run_id: int, kind: str) -> None:
             f"{snapshot_results(run_id)} companies saved to history"))
 
         stats = _final_stats(run_id)
+        if healed_steps:
+            stats["self_healed_steps"] = [h["key"] for h in healed_steps]
         status = "done" if not failed_steps else "done"   # partial failures reported per-step
         db.execute("""UPDATE runs SET status=?, finished_at=?, seconds=?, stats_json=?,
                       error=? WHERE id=?""",
                    (status, db.now_iso(), round(time.time() - t0, 1), json.dumps(stats),
-                    ("steps failed: " + ", ".join(failed_steps)) if failed_steps else None,
+                    ("steps failed: " + ", ".join(f["key"] for f in failed_steps))
+                    if failed_steps else None,
                     run_id))
+        # errors that survived the retry get reported where a human (and then
+        # Claude) will actually see them — never only in host logs
+        if failed_steps or healed_steps:
+            try:
+                report_run_errors(run_id, failed_steps, healed_steps)
+            except Exception:  # noqa: BLE001 — reporting must never fail a finished run
+                traceback.print_exc()
     except RunCancelled:
         db.execute("UPDATE run_steps SET status='skipped', detail='stopped'"
                    " WHERE run_id=? AND status IN ('pending','running')", (run_id,))
@@ -370,6 +536,8 @@ def _execute(run_id: int, kind: str) -> None:
         db.execute("UPDATE runs SET status='failed', finished_at=?, seconds=?, error=?"
                    " WHERE id=?",
                    (db.now_iso(), round(time.time() - t0, 1), str(exc)[:300], run_id))
+    finally:
+        _ka_stop.set()
 
 
 # ----------------------------------------------------------------- snapshot

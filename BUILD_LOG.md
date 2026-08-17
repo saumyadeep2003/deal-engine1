@@ -995,3 +995,59 @@ Chronological log of judgment calls made while building. Part of the deliverable
     each source is tested where it can silently go wrong. Five new version markers.
     Still user-settable, unchanged: REDDIT creds, COMPANIES_HOUSE key — and now
     PATENTSVIEW_API_KEY joins that list (all three free).
+85. **EDGAR froze for four days and every light stayed green — the snapshot cache became
+    a perfect freeze.** User report: no new SEC filings since ~Aug 13; runs 20/21/22 all
+    printed "0 new item(s), 279 already known" from edgar_formd while Source Health said
+    ok. Mechanism, once traced: SEC stopped answering this host live (rate-limit or IP
+    block — their 403 also hit an unrelated fetch client during diagnosis, and the .idx
+    URLs' failures were swallowed per-day as "weekend, no file"); every request then fell
+    back to its offline snapshot; the same historical window was re-served each run; and
+    the checkpoint — whose advance is computed from the file dates inside those very
+    hits — pinned itself. Data flowed, dedupe said "already known", health recorded ok,
+    and the freshness failure was invisible from every panel the product has. The
+    snapshot fallback did exactly what it was built for (honest offline demos) and, in
+    production, laundered an outage into normality.
+    Defences, all tested (tests/edgar_freshness_test.py, 8 checks): the adapter now
+    tracks whether ANY request in a run was answered LIVE; a snapshot-only run returns
+    its (stale, still-useful) signals but does NOT advance the checkpoint — no window is
+    skipped when SEC answers again — and forces health to degraded with the actual
+    sentence a person needs ("every response came from the offline snapshot cache — SEC
+    did not answer live once; checkpoint held"). safe_fetch grew a _force_degraded
+    channel for exactly this shape: signals returned, health degraded anyway. In the
+    index sweep, a 404 stays a calendar fact (weekend, no file) but any OTHER failure is
+    counted and named — a 403 is not a weekend. And the step panel line itself now
+    counts snapshot-served items ("⚠ 279 of 279 served from OFFLINE SNAPSHOT") because
+    "0 new, 279 already known" was true and useless. One live answer heals everything:
+    checkpoint advances, health returns to ok on its own.
+    Separately diagnosed in the same pass: runs 22, 23 AND 24 all died "interrupted by
+    restart" — Render's free tier spins the service down after ~15 idle minutes of no
+    inbound HTTP, and a running search generates none once the partner closes the
+    dashboard. The runner now starts a keep-alive thread that pings its own /healthz
+    every 4 minutes for exactly as long as a run is in flight (hosted only; a failed
+    ping never hurts the run; stopped in a finally). A search no longer needs an open
+    browser tab to survive.
+86. **Self-healing steps + Claude-ready error reports — the fix-and-redeploy loop as a
+    feature.** The owner's ask: "if any step errors, rectify it and inform me; with
+    Claude I'll redeploy." Rectify has two honest halves and the code respects the
+    boundary between them. The TRANSIENT half the engine now fixes itself: a step that
+    fails FAST (<120s) is retried once after a pause — a provider blinking, a rate
+    limit, a dropped connection all pass on the second try, the step panel ends green,
+    and the heal is noted (never hidden: "self_healed_steps" in run stats and a review-
+    queue note, because a step that heals every single run is a real problem wearing a
+    green light). Steps that failed after running LONG are not retried — 40 minutes of
+    judging repeated on a guess is not healing, and the report says why.
+    The DETERMINISTIC half is Claude's job, so the engine's job is to hand Claude
+    everything in one paste: when a step fails twice, the run finishes (partial results
+    beat none, as always) and then writes a markdown error report carrying the build
+    commit, each failed step with BOTH attempts' errors, the verdict "identical failure
+    on retry = deterministic, not transient", the traceback tail, and the loop
+    instructions ("open Claude with the deal-engine-deploy folder connected, paste
+    this, say: read HANDOFF.md then fix this error report; push; Render redeploys").
+    The report lands in the review queue (kind=run_error_report, visible at
+    /api/review-queue) and is emailed via Resend when configured — and report delivery
+    itself can never fail a finished run. The alerts-step Postgres crash (76) is the
+    exact shape this exists for: it failed identically twice in milliseconds, and this
+    report would have put the fix one paste away instead of one investigation away.
+    tests/self_heal_test.py (10 checks) drives the real run-step machinery with
+    scripted steps: flaky-once heals green, deterministic captures both attempts,
+    report content pinned. Version marker: self_heal_and_error_reports.
