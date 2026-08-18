@@ -51,6 +51,10 @@ def main() -> int:
     check("THE BUG: apollo enriches AFTER scoring — this run's Deep Dive picks",
           before("score", "collect:apollo_enrich"),
           "before scoring, this run's picks do not exist yet")
+    check("top picks are assessed AFTER ranking and BEFORE briefs render",
+          before("score", "judge_top") and before("judge_top", "collect:apollo_enrich")
+          and before("judge_top", "briefs"),
+          "a Deep Dive pick that emerged THIS run must not ship a [STUB] brief")
     check("...and apollo lands BEFORE briefs render its headcount/growth",
           before("collect:apollo_enrich", "briefs"), "")
 

@@ -340,6 +340,36 @@ def main() -> int:
     check("...and a strong-model judgement is reused, not paid for twice",
           judge._cached_judgement(dd2, require_model=STRONG) is not None, "")
 
+    # ==== the top-pick gap pass: no Deep Dive brief ships stubbed ==========
+    # Scenario from the live box: 250 YC companies reshuffle the ranking; today's
+    # Deep Dive picks were not candidates last run, so the main pass never
+    # prioritised them and their briefs — the ones a partner opens FIRST — read
+    # [STUB]. judge_deep_dive_gaps runs after score_all and closes exactly that.
+    newpick, _ = seed_company("Fresh Top Pick", status="hot")
+    store_judgement(newpick, {"model": None}, recommendation="Deep Dive")
+    db.execute("""UPDATE scores SET features_json='{"computed": {}, "judged": null}'
+                  WHERE company_id=?""", (newpick,))
+    oldpick, _ = seed_company("Settled Pick", status="hot")
+    store_judgement(oldpick, {**GOOD, "model": STRONG,
+                              "evidence_fingerprint": judge._signal_fingerprint(oldpick)},
+                    recommendation="Deep Dive")
+    script()
+    plan_for("Fresh Top Pick", GOOD)
+    extra = judge.judge_deep_dive_gaps(verbose=False)
+    check("THE GAP: a Deep Dive pick that emerged THIS run is assessed post-scoring",
+          newpick in extra and extra[newpick]["model"] == STRONG,
+          str({k: v.get("model") for k, v in extra.items()}))
+    check("...on the strong model, with the fingerprint stamped",
+          str(extra[newpick].get("evidence_fingerprint", "")).startswith("ctx1:"), "")
+    check("...while an already-judged pick costs nothing",
+          oldpick not in extra
+          and not [c for c in CALLS if c["company"] == "Settled Pick"],
+          "steady state this pass is free")
+    check("...and a non-Deep-Dive company is not touched by this pass",
+          all(judge.db.q1("SELECT recommendation FROM scores WHERE company_id=?"
+                          " ORDER BY id DESC LIMIT 1", (k,))["recommendation"]
+              == "Deep Dive" for k in extra), "")
+
     # ==== the deploy can prove it took ====================================
     from engine import version
     feats = version.features()

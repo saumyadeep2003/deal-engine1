@@ -530,6 +530,63 @@ def _dispute_is_open(company_id: int) -> bool:
     return False
 
 
+def judge_deep_dive_gaps(cap: int | None = None, verbose: bool = True,
+                         progress_cb=None) -> dict[int, dict]:
+    """Assess THIS run's Deep Dive picks that lack a valid judgement — after
+    scoring, before briefs.
+
+    The main judging pass runs BEFORE scoring, so its Deep-Dive-first routing can
+    only read the PREVIOUS run's picks. That lag was acceptable until a source
+    like YC could add 250 companies in one run and reshuffle the whole top of
+    the ranking — at which point the briefs a partner opens FIRST (today's Deep
+    Dive list) were exactly the ones still reading [STUB]. This pass closes the
+    gap: it runs after score_all has written this run's recommendations, judges
+    only the Deep Dive picks that still lack a strong-model judgement, and the
+    caller re-scores so the new judgements are blended before anything renders.
+    Steady state it costs nothing (every pick already carries a judgement and the
+    list is empty); it only spends when the top of the ranking actually moved."""
+    if llm.stubbed():
+        return {}
+    strong = strong_model()
+    budget = cap if cap is not None else int(os.environ.get("JUDGE_TOP_PICKS_N",
+                                                            str(JUDGE_TOP_N)))
+    deep = deep_dive_candidates()        # reads the scores score_all just wrote
+    if not deep:
+        return {}
+    ranked = db.q(f"""SELECT s.company_id cid, s.percentile FROM scores s
+                      WHERE s.id=(SELECT id FROM scores s2 WHERE s2.company_id=s.company_id
+                                  ORDER BY scored_at DESC, id DESC LIMIT 1)
+                      AND s.company_id IN ({','.join('?' * len(deep))})
+                      ORDER BY s.percentile DESC""", tuple(deep))
+    pending = [r["cid"] for r in ranked
+               if _cached_judgement(r["cid"], require_model=strong) is None
+               and not _dispute_is_open(r["cid"])]
+    results: dict[int, dict] = {}
+    for i, cid in enumerate(pending[:budget], start=1):
+        if progress_cb:
+            row = db.q1("SELECT name FROM companies WHERE id=?", (cid,))
+            try:
+                progress_cb(i, min(len(pending), budget), row["name"] if row else f"#{cid}")
+            except Exception:  # noqa: BLE001
+                pass
+        judged = assess_company(cid, prefer_strong=True)
+        if not judged:
+            continue
+        judged["evidence_fingerprint"] = _signal_fingerprint(cid)
+        if judged.get("is_venture_relevant") is False:
+            if judged.get(REJECTION_CONFIRM):
+                db.execute("UPDATE companies SET status='filtered' WHERE id=?", (cid,))
+            else:
+                _flag_unconfirmed_rejection(cid, judged)
+            continue
+        results[cid] = judged
+    if verbose:
+        left = max(0, len(pending) - budget)
+        print(f"  top-pick assessment: {len(results)} Deep Dive pick(s) newly judged"
+              + (f"; {left} still waiting (raise JUDGE_TOP_PICKS_N)" if left else ""))
+    return results
+
+
 def _flag_unconfirmed_rejection(company_id: int, judged: dict) -> None:
     """One review_queue row per disagreement, not one per run: re-flagging the same
     argument every search turns the queue into a log nobody reads."""

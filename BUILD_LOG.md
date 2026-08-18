@@ -1092,3 +1092,28 @@ Chronological log of judgment calls made while building. Part of the deliverable
     /api/connections exposes each source's checkpoint and last_error — the two facts
     that turn the next freeze diagnosis from guesswork into a read.
     Tests: identity 18->22, phase2 26->29, edgar_freshness 8->10. All 13 suites green.
+88. **Top picks were the LAST briefs to get judgements — the one ordering the whole
+    system exists to prevent.** The user's report was exact: "the top picks and Deep
+    Dive companies are also showing stubs." Mechanism: Deep-Dive-first judging routes
+    on the PREVIOUS run's picks (75), a lag that was tolerable until yc_companies could
+    add 250 companies in one run and reshuffle the entire top of the ranking. A company
+    that became a top pick THIS run was nobody's priority: the 40-judgement budget went
+    to the pending list ranked by computed composite (dominated by the newcomers), and
+    the briefs a partner opens FIRST — today's Deep Dive list — were exactly the ones
+    reading [STUB]. Coverage percentages even looked fine, because they don't know
+    which companies matter.
+    Fix: `judge.judge_deep_dive_gaps` + a `judge_top` step between score and the
+    Apollo collect. After score_all writes THIS run's recommendations, every Deep Dive
+    pick still lacking a valid strong-model judgement is assessed immediately
+    (percentile order, strong model first, same two-model rejection rules, same
+    dispute skip), then score_all runs again so the new judgements are blended into
+    the percentiles and recommendations the briefs are about to render. Steady state
+    the step costs nothing — every pick already carries a judgement and it prints so;
+    it only spends when the top of the ranking actually moved, which is precisely
+    when spending is right. Budget: JUDGE_TOP_PICKS_N (defaults to JUDGE_TOP_N).
+    Apollo stays after this step, so its credits also follow the re-ranked list.
+    The invariant this buys, stated plainly: A DEEP DIVE BRIEF NEVER SHIPS STUBBED
+    when the provider is up — the first backlog run pays down the existing 84, and
+    from then on the guarantee holds per-run. judge_verification_test 35->39 (the gap
+    scenario scripted end to end), run_sequence_test 11->12 (score < judge_top <
+    apollo < briefs pinned).

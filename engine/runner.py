@@ -112,6 +112,9 @@ def build_steps(kind: str) -> list[tuple[str, str]]:
         ("enrich", "Gathering extra company details"),
         ("judge", "AI assessment of the top companies"),
         ("score", "Ranking everyone against similar companies"),
+        # top picks are the briefs a partner opens FIRST — a Deep Dive pick that
+        # emerged in THIS run's ranking is assessed now, not next run
+        ("judge_top", "AI assessment for this search's Deep Dive picks"),
     ]
     # Apollo AFTER scoring: it enriches THIS run's Deep Dive picks, and its
     # headcount/growth fields land in the cache before the briefs render them.
@@ -474,6 +477,21 @@ def _execute(run_id: int, kind: str) -> None:
 
         run_step("score", lambda st: st.progress(
             f"{scoring.score_all(judged_box, verbose=False)['scored']} companies ranked"))
+
+        def judge_top_step(st):
+            def cb(i, n, name):
+                _check_cancel()
+                st.progress(f"assessing top pick {name} ({i} of {n})", items=n)
+            extra = judge.judge_deep_dive_gaps(verbose=False, progress_cb=cb)
+            if extra:
+                judged_box.update(extra)
+                # re-rank so the new judgements are blended into the percentiles
+                # and recommendations the briefs are about to render
+                scoring.score_all(judged_box, verbose=False)
+                st.progress(f"{len(extra)} top pick(s) assessed and re-ranked")
+            else:
+                st.progress("every Deep Dive pick already carries an assessment")
+        run_step("judge_top", judge_top_step)
 
         # -- Apollo AFTER scoring: enriches THIS run's Deep Dive picks, and its
         # headcount/growth land in the cache before the briefs render them --
